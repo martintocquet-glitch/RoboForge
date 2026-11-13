@@ -21,12 +21,12 @@ export interface Issue {
 export interface Analysis {
   type: RobotType;
   parts: {
-    chassis?: Chassis;
-    controller?: Controller;
-    motor?: Motor;
-    driver?: Driver;
-    battery?: Battery;
-    propulsion?: Propulsion;
+    chassis?: Chassis | undefined;
+    controller?: Controller | undefined;
+    motor?: Motor | undefined;
+    driver?: Driver | undefined;
+    battery?: Battery | undefined;
+    propulsion?: Propulsion | undefined;
     sensors: Sensor[];
   };
   issues: Issue[];

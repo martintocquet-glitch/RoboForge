@@ -72,8 +72,8 @@ export function circleRect(cx: number, cy: number, rad: number, r: Rect): boolea
 export function distToPolyline(px: number, py: number, pts: [number, number][]): number {
   let best = Infinity;
   for (let i = 0; i < pts.length; i++) {
-    const [ax, ay] = pts[i];
-    const [bx, by] = pts[(i + 1) % pts.length];
+    const [ax, ay] = pts[i]!;
+    const [bx, by] = pts[(i + 1) % pts.length]!;
     const vx = bx - ax;
     const vy = by - ay;
     const l2 = vx * vx + vy * vy || 1e-9;

@@ -138,12 +138,12 @@ export interface RobotType {
 
 export interface Build {
   type: RobotTypeId;
-  chassis?: string;
-  controller?: string;
-  motor?: string;
+  chassis?: string | undefined;
+  controller?: string | undefined;
+  motor?: string | undefined;
   motorCount: number;
-  driver?: string;
-  battery?: string;
-  propulsion?: string;
+  driver?: string | undefined;
+  battery?: string | undefined;
+  propulsion?: string | undefined;
   sensors: string[];
 }

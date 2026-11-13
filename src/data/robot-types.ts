@@ -14,4 +14,4 @@ export const ROBOT_TYPES: RobotType[] = [
   { id: "humanoid", name: "Humanoïde", short: "HUM", sim: "ground", motorCount: 17, motorKinds: ["servo", "smart-servo"], propulsionKinds: ["leg"], needsDriver: false, blurb: "Robot bipède à 17 articulations." },
 ];
 
-export const getRobotType = (id: RobotTypeId) => ROBOT_TYPES.find((t) => t.id === id) ?? ROBOT_TYPES[0];
+export const getRobotType = (id: RobotTypeId) => ROBOT_TYPES.find((t) => t.id === id) ?? ROBOT_TYPES[0]!;
