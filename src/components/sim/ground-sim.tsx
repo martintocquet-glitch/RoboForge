@@ -50,6 +50,13 @@ const OBSTACLES: Rect[] = [
   { x: 0.45, y: 0.28, w: 0.06, h: 0.06 },
 ];
 
+// Champ d'inspection : trois murs bas, dont un bloquant entre le départ et la première balise.
+const FIELD_OBSTACLES: Rect[] = [
+  { x: 0.45, y: 0.05, w: 0.05, h: 0.42 },
+  { x: 0.66, y: 0.5, w: 0.2, h: 0.06 },
+  { x: 0.24, y: 0.66, w: 0.06, h: 0.24 },
+];
+
 // Cibles colorées de l'arène : le vert rapporte, le rouge pénalise.
 const TARGETS: { x: number; y: number; good: boolean }[] = [
   { x: 0.72, y: 0.2, good: true },
@@ -120,7 +127,7 @@ function makeWorld(s: Scenario, len: number): World {
     return {
       W,
       H,
-      rects: [...walls(W, H), ...OBSTACLES.map((r) => ({ x: r.x * W, y: r.y * H, w: r.w * W, h: r.h * H }))],
+      rects: [...walls(W, H), ...FIELD_OBSTACLES.map((r) => ({ x: r.x * W, y: r.y * H, w: r.w * W, h: r.h * H }))],
       start: { x: W * 0.08, y: H * 0.14, th: 0, v: 0, w: 0, vs: 0 },
       targets: [],
       zones: [],
@@ -243,6 +250,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let bumps = 0;
     let gas = 0; // concentration lue
     let gasT = 0; // demi-tour d'évitement en cours
+    let gasCool = 0; // temps pendant lequel le réflexe gaz ne se redéclenche pas
     let contaminated = false;
     let fix: { x: number; y: number } | null = null; // position perçue par le GPS
     let fixT = 0;
@@ -379,6 +387,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       const rawGas = world.gas ? gasLevel(me.x, me.y, world.gas) : 0;
       gas = caps.gas ? rawGas : 0;
       if (rawGas > 0.12 && !caps.gas) contaminated = true;
+      gasCool = Math.max(0, gasCool - dt);
 
       if (autoOn) {
         const sector = (lo: number, hi: number) => {
@@ -443,10 +452,22 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
               thr = 1;
               turn = Math.max(-1, Math.min(1, wrapAngle(want - me.th) * 1.5));
               if (front < safe) {
-                thr = 0;
-                turn = left > right ? -1 : 1;
+                // reculer en tournant : pivoter sur place devant un mur ne suffit pas à se dégager
+                if (avoidT <= 0) {
+                  turnDir = left > right ? -1 : right > left ? 1 : Math.random() < 0.5 ? -1 : 1;
+                  avoidT = 0.7;
+                }
+                avoidT -= dt;
+                thr = -0.4;
+                turn = turnDir;
               }
-              if (gas > 0.25) gasT = 0.8;
+              // le cœur du nuage fait reculer ; lisière = ralentir, et on peut traverser
+              if (gas > 0.6 && gasCool <= 0) {
+                gasT = 0.6;
+                gasCool = 3;
+              } else if (gas > 0.25) {
+                thr *= 0.45;
+              }
             } else {
               thr = 0.1;
               turn = 0.9;
@@ -657,9 +678,11 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         }
       }
       // arrivée aux balises GPS, jugée sur la position réelle et non sur celle perçue
+      // la tolérance suit la précision de l'antenne : un GPS à 2,5 m ne vise pas une pastille de 35 cm
       if (scenario === "mission") {
         const wp = world.waypoints[wpIdx];
-        if (wp && Math.hypot(wp[0] - me.x, wp[1] - me.y) < Math.max(0.35, rad * 1.8)) {
+        const arriveR = Math.max(0.35, rad * 1.8, (caps.gpsAcc ?? 0) * 1.2);
+        if (wp && Math.hypot(wp[0] - me.x, wp[1] - me.y) < arriveR) {
           wpDone++;
           wpIdx = (wpIdx + 1) % world.waypoints.length;
         }

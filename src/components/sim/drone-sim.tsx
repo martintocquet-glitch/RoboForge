@@ -197,8 +197,8 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
         const dx = waypoint[0] - fxX;
         const dy = waypoint[1] - fxY;
         const d = Math.hypot(dx, dy);
-        // l'arrivée, elle, est jugée sur la position réelle
-        if (Math.hypot(waypoint[0] - me.x, waypoint[1] - me.y) < Math.max(0.6, span)) {
+        // l'arrivée, elle, est jugée sur la position réelle ; la tolérance suit la précision GPS
+        if (Math.hypot(waypoint[0] - me.x, waypoint[1] - me.y) < Math.max(0.6, span, (caps.gpsAcc ?? 0) * 1.2)) {
           wpWait += dt;
           if (wpWait > 0.8) {
             waypoint = null;
