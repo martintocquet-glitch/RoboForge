@@ -571,6 +571,7 @@ export default function GroundScene3D({ st, live, camera }: { st: GroundStatic; 
       <CameraRig
         mode={camera}
         arena={{ W: st.W, H: st.H }}
+        clampToArena={st.scenario !== "sumo"}
         dist={chaseDist}
         height={Math.max(topY * 2.2, chaseDist * 0.55)}
         getTarget={() => {

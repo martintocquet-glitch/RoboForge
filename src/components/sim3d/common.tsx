@@ -1,6 +1,6 @@
 import { Environment, Lightformer, OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Component, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { CameraMode } from "@/components/sim/scene-types";
 
@@ -277,8 +277,11 @@ export function CameraRig({
   dist,
   height,
   arena,
+  clampToArena,
 }: {
   mode: CameraMode;
+  /** Garde la caméra de poursuite à l'intérieur de l'arène (murs). */
+  clampToArena?: boolean;
   getTarget: () => Follow;
   dist: number;
   height: number;
@@ -308,6 +311,11 @@ export function CameraRig({
       const dx = Math.cos(t.heading);
       const dz = Math.sin(t.heading);
       const want = new THREE.Vector3(t.x - dx * dist, t.y + height, t.z - dz * dist);
+      if (clampToArena) {
+        const m = Math.min(arena.W, arena.H) * 0.03;
+        want.x = Math.max(m, Math.min(arena.W - m, want.x));
+        want.z = Math.max(m, Math.min(arena.H - m, want.z));
+      }
       const wantLook = new THREE.Vector3(t.x + dx * dist * 0.6, t.y, t.z + dz * dist * 0.6);
       const k = first.current ? 1 : 1 - Math.exp(-5 * dt);
       first.current = false;
@@ -364,7 +372,7 @@ export function DynamicSegments({
 }
 
 // ---------------------------------------------------------------------------
-// Signal « scène prête » + garde-fou d'erreur
+// Signal « scène prête »
 // ---------------------------------------------------------------------------
 
 export function ReadySignal() {
@@ -375,17 +383,4 @@ export function ReadySignal() {
     if (frames.current === 3) gl.domElement.closest("[data-scene-root]")?.setAttribute("data-scene-ready", "true");
   });
   return null;
-}
-
-export class Scene3DBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
-  override state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  override componentDidCatch(err: unknown) {
-    console.error("Vue 3D indisponible :", err);
-  }
-  override render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
 }

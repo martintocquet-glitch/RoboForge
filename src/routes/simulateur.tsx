@@ -47,9 +47,9 @@ function Simulateur() {
             </ul>
           </div>
         ) : type.sim === "ground" ? (
-          <GroundSim analysis={analysis} />
+          <GroundSim key={type.id} analysis={analysis} />
         ) : type.sim === "drone" ? (
-          <DroneSim analysis={analysis} />
+          <DroneSim key={type.id} analysis={analysis} />
         ) : (
           <div className="rounded-md border border-border bg-panel p-6 text-muted-foreground">
             La simulation du bras robotique n'est pas encore disponible. Les robots au sol et les drones peuvent déjà être pilotés.

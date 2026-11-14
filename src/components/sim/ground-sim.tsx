@@ -1,15 +1,19 @@
 import { Pause, Play, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Sensor } from "@/data/types";
 import type { Analysis } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
+import type { CameraMode, GroundLive, GroundStatic, ViewMode } from "./scene-types";
+import { CAMERA_HINT, Scene3DBoundary, SceneMessage, ViewControls } from "./scene-view";
 import { castRay, circleRect, distToPolyline, drawGrid, readTokens, setupCanvas, wrapAngle, type Rect, type Tokens } from "./sim-utils";
 
 type Scenario = "arena" | "track" | "sumo";
 type Tele = { label: string; value: string; tone?: "ok" | "warn" | "bad" }[];
+
+const GroundScene3D = lazy(() => import("@/components/sim3d/ground-scene"));
 
 const TIME_SCALE = 20; // la batterie se vide 20× plus vite pour être visible
 
@@ -102,6 +106,12 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
   const [resetKey, setResetKey] = useState(0);
   const [tele, setTele] = useState<Tele>([]);
   const [banner, setBanner] = useState<string | null>(null);
+  const [view, setView] = useState<ViewMode>("3d");
+  const [camera, setCamera] = useState<CameraMode>("chase");
+  const [st, setSt] = useState<GroundStatic | null>(null);
+  const liveRef = useRef<GroundLive | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const keys = useRef(new Set<string>());
@@ -129,8 +139,6 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const tk: Tokens = readTokens();
     const len = Math.max(0.08, (parts.chassis?.size[0] ?? 150) / 1000);
     const wid = Math.max(0.06, (parts.chassis?.size[1] ?? 120) / 1000);
@@ -172,6 +180,27 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let raf = 0;
     let prev = performance.now();
     setBanner(null);
+    const sensorOffsets = distSensors.map((_, i) => (distSensors.length > 1 ? (i - (distSensors.length - 1) / 2) * 0.55 : 0));
+    setSt({
+      scenario,
+      W: world.W,
+      H: world.H,
+      obstacles: world.rects.filter((r) => r.x >= -1e-6 && r.y >= -1e-6 && r.x + r.w <= world.W + 1e-6 && r.y + r.h <= world.H + 1e-6),
+      track: world.track,
+      lineW: world.lineW,
+      ringR: world.ringR,
+      len,
+      wid,
+      typeId: type.id,
+      propKind: parts.propulsion?.kind ?? "wheel",
+      wheelD: (parts.propulsion?.diameter ?? 60) / 1000,
+      wheelPairs: type.motorCount >= 4 || isMecanum ? 2 : 1,
+      sensorOffsets,
+      hasLidar: !!lidar,
+      hasLine: !!lineSensor,
+      hasCamera: parts.sensors.some((s) => s.kind === "camera"),
+    });
+    liveRef.current = null;
 
     const resetSumo = () => {
       Object.assign(me, world.start, { v: 0, w: 0, vs: 0 });
@@ -419,6 +448,18 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     };
 
     const draw = (s: ReturnType<typeof step>) => {
+      liveRef.current = {
+        me: { x: me.x, y: me.y, th: me.th, v: me.v },
+        opp: scenario === "sumo" ? { x: opp.x, y: opp.y, th: opp.th, v: opp.v } : null,
+        rays: s.rays,
+        scan: s.scan,
+        lineR: s.lineR,
+        map: mapCells,
+        cell,
+        gait,
+      };
+      const canvas = canvasRef.current;
+      if (!canvas || viewRef.current !== "2d") return;
       const { ctx } = setupCanvas(canvas, world.W, world.H);
       const px = world.W / 600;
       ctx.fillStyle = tk.bg;
@@ -599,7 +640,9 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    const onResize = () => setupCanvas(canvas, world.W, world.H);
+    const onResize = () => {
+      if (canvasRef.current) setupCanvas(canvasRef.current, world.W, world.H);
+    };
     window.addEventListener("resize", onResize);
     return () => {
       cancelAnimationFrame(raf);
@@ -640,15 +683,43 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
           </Button>
         </div>
       </div>
-      {autoReason && <p className="text-sm text-warning">{autoReason}</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <ViewControls view={view} setView={setView} camera={camera} setCamera={setCamera} />
+        {autoReason && <p className="text-sm text-warning">{autoReason}</p>}
+      </div>
 
-      <div ref={wrapRef} {...keyHandlers} className="relative overflow-hidden rounded-md border border-border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => wrapRef.current?.focus()}>
-        <canvas ref={canvasRef} className="block w-full" />
+      <div
+        ref={wrapRef}
+        {...keyHandlers}
+        data-scene-root={view === "3d" ? "" : undefined}
+        className={cn("relative overflow-hidden rounded-md border border-border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring", view === "3d" && "h-[min(70vh,560px)] min-h-[320px]")}
+        onPointerDown={() => wrapRef.current?.focus({ preventScroll: true })}
+      >
+        {view === "2d" ? (
+          <canvas ref={canvasRef} className="block w-full" />
+        ) : st ? (
+          <Scene3DBoundary
+            fallback={
+              <SceneMessage>
+                La vue 3D ne fonctionne pas sur cet appareil.{" "}
+                <button type="button" className="ml-1 text-primary underline" onClick={() => setView("2d")}>
+                  Passer en 2D
+                </button>
+              </SceneMessage>
+            }
+          >
+            <Suspense fallback={<SceneMessage>Chargement du monde 3D…</SceneMessage>}>
+              <GroundScene3D st={st} live={liveRef} camera={camera} />
+            </Suspense>
+          </Scene3DBoundary>
+        ) : (
+          <SceneMessage>Chargement du monde 3D…</SceneMessage>
+        )}
         {banner && scenario === "sumo" && (
           <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded bg-card px-3 py-1 font-display text-sm font-semibold shadow-panel">{banner}</div>
         )}
         <div className="pointer-events-none absolute bottom-2 left-2 label-tech">
-          {isLeg ? "Démarche simplifiée vue de dessus" : "Vue de dessus"} · batterie accélérée ×{TIME_SCALE}
+          {view === "3d" ? CAMERA_HINT[camera] : isLeg ? "Démarche simplifiée vue de dessus" : "Vue de dessus"} · batterie accélérée ×{TIME_SCALE}
         </div>
       </div>
 
