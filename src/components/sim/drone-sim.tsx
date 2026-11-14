@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import type { Analysis } from "@/lib/robot-calc";
 import { GRAVITY } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
+import { capabilities, gpsOffset } from "@/lib/sensor-effects";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
 import type { CameraMode, DroneLive, DroneStatic, ViewMode } from "./scene-types";
 import { CAMERA_HINT, Scene3DBoundary, SceneMessage, ViewControls } from "./scene-view";
@@ -90,6 +91,9 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
     const vmax = Math.max(2, analysis.speedMs); // vitesse horizontale max
     const tiltA = vmax * 2.5; // accélération horizontale
     const autoOn = auto && !autoReason;
+    const caps = capabilities(parts.sensors);
+    let fix: { x: number; y: number } | null = null;
+    let fixT = 0;
 
     const capAh = ((parts.battery?.capacity ?? 0) * 0.8) / 1000;
     const elecA = ((parts.controller?.currentmA ?? 0) + parts.sensors.reduce((a, s) => a + s.currentmA, 0)) / 1000;
@@ -119,6 +123,7 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
       motorCount: analysis.type.motorCount,
       hasGps: !!gps,
       hasLidar: !!lidar,
+      gpsAcc: caps.gpsAcc,
       start: { x: start.x, y: start.y },
     });
     liveRef.current = null;
@@ -174,14 +179,26 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
       const rays = sensorRays();
       const scan = lidarScan();
 
+      // le point GPS est rafraîchi 5 fois par seconde, avec l'erreur de l'antenne montée
+      fixT += dt;
+      if (caps.gpsAcc != null && fixT >= 0.2) {
+        fixT = 0;
+        const [ox, oy] = gpsOffset(caps.gpsAcc);
+        fix = { x: me.x + ox, y: me.y + oy };
+      }
+
       if (autoOn) {
         // Mission : enchaîner des waypoints en maintenant une altitude de croisière
         const cruise = 5;
         if (!waypoint) waypoint = newWaypoint();
-        const dx = waypoint[0] - me.x;
-        const dy = waypoint[1] - me.y;
+        // le drone se dirige d'après la position que son GPS lui renvoie
+        const fxX = fix ? fix.x : me.x;
+        const fxY = fix ? fix.y : me.y;
+        const dx = waypoint[0] - fxX;
+        const dy = waypoint[1] - fxY;
         const d = Math.hypot(dx, dy);
-        if (d < Math.max(0.6, span)) {
+        // l'arrivée, elle, est jugée sur la position réelle
+        if (Math.hypot(waypoint[0] - me.x, waypoint[1] - me.y) < Math.max(0.6, span)) {
           wpWait += dt;
           if (wpWait > 0.8) {
             waypoint = null;
@@ -325,6 +342,7 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
         scan: s.scan,
         waypoint: autoOn ? waypoint : null,
         crashed: !!crashed,
+        fix,
       };
       const canvas = canvasRef.current;
       if (!canvas || viewRef.current !== "2d") return;
@@ -435,6 +453,27 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
       ctx.closePath();
       ctx.fill();
 
+      // waypoint visé + position perçue par le GPS
+      if (waypoint) {
+        ctx.strokeStyle = tk.warning;
+        ctx.lineWidth = px * 2;
+        ctx.beginPath();
+        ctx.arc(waypoint[0], waypoint[1], Math.max(px * 6, rad * 0.9), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (fix) {
+        const ar = Math.max(px * 7, rad * 0.8);
+        ctx.strokeStyle = tk.signal;
+        ctx.lineWidth = px * 1.5;
+        ctx.beginPath();
+        ctx.arc(fix.x, fix.y, ar * 0.55, 0, Math.PI * 2);
+        ctx.moveTo(fix.x - ar, fix.y);
+        ctx.lineTo(fix.x + ar, fix.y);
+        ctx.moveTo(fix.x, fix.y - ar);
+        ctx.lineTo(fix.x, fix.y + ar);
+        ctx.stroke();
+      }
+
       // jauge d'altitude à droite
       const gx = W - px * 26;
       const gh = H * 0.5;
@@ -476,6 +515,12 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
           items.unshift({ label: "Altitude", value: `${me.z.toFixed(1)} m`, ...(me.z > CEILING * 0.85 ? { tone: "warn" as const } : {}) });
           items.splice(1, 0, { label: "Vitesse vert.", value: `${me.vz.toFixed(1)} m/s`, ...(me.vz < -3 ? { tone: "bad" as const } : {}) });
           if (autoOn) items.push({ label: "Waypoints", value: `${wpCount}`, tone: "ok" });
+          if (caps.gpsAcc != null)
+            items.push({
+              label: "Précision GPS",
+              value: caps.gpsAcc < 0.1 ? `± ${Math.round(caps.gpsAcc * 100)} cm` : `± ${caps.gpsAcc.toFixed(1)} m`,
+              tone: caps.gpsAcc <= 0.05 ? "ok" : caps.gpsAcc <= 1.5 ? "warn" : "bad",
+            });
           setTele(items);
         }
       }

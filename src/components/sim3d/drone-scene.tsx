@@ -236,6 +236,7 @@ function City({ st, colors }: { st: DroneStatic; colors: SceneColors }) {
 function DroneFx({ st, live, colors }: { st: DroneStatic; live: MutableRefObject<DroneLive | null>; colors: SceneColors }) {
   const wp = useRef<THREE.Group>(null);
   const blob = useRef<THREE.Mesh>(null);
+  const fix = useRef<THREE.Group>(null);
   const legH = (st.span / 2) * 0.22;
   useFrame((state) => {
     const L = live.current;
@@ -246,6 +247,11 @@ function DroneFx({ st, live, colors }: { st: DroneStatic; live: MutableRefObject
         wp.current.position.set(L.waypoint[0], 0, L.waypoint[1]);
         wp.current.rotation.y = state.clock.elapsedTime;
       }
+    }
+    if (fix.current) {
+      // la position que le GPS renvoie, pas celle du drone
+      fix.current.visible = !!L.fix;
+      if (L.fix) fix.current.position.set(L.fix.x, 0, L.fix.y);
     }
     const b = blob.current;
     if (b) {
@@ -275,6 +281,16 @@ function DroneFx({ st, live, colors }: { st: DroneStatic; live: MutableRefObject
         <circleGeometry args={[st.span * 0.5, 24]} />
         <meshBasicMaterial color={MAT.black} transparent opacity={0.3} depthWrite={false} />
       </mesh>
+      <group ref={fix} visible={false}>
+        <mesh rotation-x={-Math.PI / 2} position-y={0.02}>
+          <ringGeometry args={[ringR * 0.22, ringR * 0.34, 24]} />
+          <meshBasicMaterial color={colors.signal} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position-y={st.ceiling * 0.18}>
+          <cylinderGeometry args={[ringR * 0.03, ringR * 0.03, st.ceiling * 0.36, 8]} />
+          <meshBasicMaterial color={colors.signal} transparent opacity={0.6} depthWrite={false} />
+        </mesh>
+      </group>
       <DynamicSegments
         max={16}
         color={colors.warning}

@@ -537,6 +537,95 @@ function SensorFx({ st, live, colors }: { st: GroundStatic; live: MutableRefObje
 }
 
 // ---------------------------------------------------------------------------
+// Objets de mission : zones, cibles colorées, nuage de gaz, point GPS, pare-chocs
+// ---------------------------------------------------------------------------
+
+function WorldFx({ st, live, colors }: { st: GroundStatic; live: MutableRefObject<GroundLive | null>; colors: SceneColors }) {
+  // la liste des cibles est figée au montage ; une cible ramassée est juste masquée
+  const targets = useMemo(() => st.targets.slice(), [st.targets]);
+  const targetRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const fixRef = useRef<THREE.Group>(null);
+  const objRef = useRef<THREE.Mesh>(null);
+  const bumpRef = useRef<THREE.Mesh>(null);
+  const gasRef = useRef<THREE.Mesh>(null);
+
+  useFrame(() => {
+    const L = live.current;
+    targets.forEach((t, i) => {
+      const m = targetRefs.current[i];
+      if (m) m.visible = st.targets.includes(t);
+    });
+    const f = L?.fix ?? null;
+    if (fixRef.current) {
+      fixRef.current.visible = !!f;
+      if (f) fixRef.current.position.set(f.x, 0, f.y);
+    }
+    const o = L?.target ?? null;
+    if (objRef.current) {
+      objRef.current.visible = !!o;
+      if (o) objRef.current.position.set(o[0], 0.02, o[1]);
+    }
+    if (bumpRef.current) {
+      const on = !!L?.bumper;
+      bumpRef.current.visible = on;
+      if (L && on) bumpRef.current.position.set(L.me.x, 0.025, L.me.y);
+    }
+    if (gasRef.current) {
+      const m = gasRef.current.material as THREE.MeshStandardMaterial;
+      m.opacity = st.hasGas ? 0.16 + (L?.gas ?? 0) * 0.3 : 0.05;
+    }
+  });
+
+  const ringR = Math.max(0.04, st.len * 0.35);
+  const pinH = Math.max(0.1, st.len * 0.7);
+  return (
+    <group>
+      {st.zones.map((z, i) => (
+        <mesh key={`z${i}`} position={[z.x, 0.006, z.y]} rotation-x={-Math.PI / 2} receiveShadow>
+          <circleGeometry args={[z.r, 40]} />
+          <meshStandardMaterial color={colors.danger} transparent opacity={0.32} roughness={0.85} />
+        </mesh>
+      ))}
+      {targets.map((t, i) => (
+        <mesh
+          key={`t${i}`}
+          ref={(m) => void (m && (targetRefs.current[i] = m))}
+          position={[t.x, 0.012, t.y]}
+          rotation-x={-Math.PI / 2}
+        >
+          <circleGeometry args={[t.r, 28]} />
+          <meshStandardMaterial color={t.good ? colors.success : colors.danger} transparent opacity={0.9} roughness={0.6} />
+        </mesh>
+      ))}
+      {st.gas && (
+        <mesh ref={gasRef} position={[st.gas.x, Math.max(0.15, st.gas.r * 0.55), st.gas.y]}>
+          <sphereGeometry args={[st.gas.r, 24, 16]} />
+          <meshStandardMaterial color={colors.success} transparent opacity={0.16} roughness={1} depthWrite={false} />
+        </mesh>
+      )}
+      <group ref={fixRef} visible={false}>
+        <mesh position-y={0.009} rotation-x={-Math.PI / 2}>
+          <ringGeometry args={[ringR * 0.62, ringR, 28]} />
+          <meshBasicMaterial color={colors.signal} />
+        </mesh>
+        <mesh position-y={pinH / 2}>
+          <cylinderGeometry args={[ringR * 0.09, ringR * 0.09, pinH, 8]} />
+          <meshBasicMaterial color={colors.signal} />
+        </mesh>
+      </group>
+      <mesh ref={objRef} visible={false} rotation-x={-Math.PI / 2}>
+        <ringGeometry args={[ringR * 0.8, ringR * 1.15, 32]} />
+        <meshBasicMaterial color={colors.warning} />
+      </mesh>
+      <mesh ref={bumpRef} visible={false} rotation-x={-Math.PI / 2}>
+        <ringGeometry args={[Math.max(0.05, st.len * 0.75), Math.max(0.07, st.len * 0.95), 32]} />
+        <meshBasicMaterial color={colors.danger} transparent opacity={0.75} />
+      </mesh>
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export default function GroundScene3D({ st, live, camera }: { st: GroundStatic; live: MutableRefObject<GroundLive | null>; camera: CameraMode }) {
   const colors = useSceneColors();
@@ -563,6 +652,7 @@ export default function GroundScene3D({ st, live, camera }: { st: GroundStatic; 
       <fog attach="fog" args={[MAT.sky, size * 1.5, size * 5]} />
       <SceneLights size={size} center={[st.W / 2, st.H / 2]} />
       <Arena st={st} colors={colors} />
+      <WorldFx st={st} live={live} colors={colors} />
       <group position-y={ringY}>
         <RobotModel st={st} pose={mePose} accent={colors.primary} colors={colors} />
         {st.scenario === "sumo" && <RobotModel st={st} pose={oppPose} accent={colors.danger} colors={colors} opponent />}

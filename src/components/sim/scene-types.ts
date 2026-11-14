@@ -12,8 +12,14 @@ export interface Pose {
   v: number;
 }
 
+export interface Disc {
+  x: number;
+  y: number;
+  r: number;
+}
+
 export interface GroundStatic {
-  scenario: "arena" | "track" | "sumo";
+  scenario: "arena" | "track" | "sumo" | "mission";
   W: number;
   H: number;
   obstacles: Rect[];
@@ -30,6 +36,13 @@ export interface GroundStatic {
   hasLidar: boolean;
   hasLine: boolean;
   hasCamera: boolean;
+  hasBumper: boolean;
+  hasColor: boolean;
+  hasGas: boolean;
+  gpsAcc: number | null; // m : erreur de position du GPS monté
+  targets: (Disc & { good: boolean })[]; // cibles colorées
+  zones: Disc[]; // bandes de freinage rouges sur la piste
+  gas?: Disc | undefined; // nuage toxique
 }
 
 export interface GroundLive {
@@ -41,6 +54,10 @@ export interface GroundLive {
   map: Map<string, [number, number]>;
   cell: number;
   gait: number;
+  fix: { x: number; y: number } | null; // position perçue par le GPS
+  gas: number; // concentration lue, 0..1
+  bumper: boolean; // appui sur le pare-chocs
+  target: [number, number] | null; // objectif en cours (waypoint GPS ou cible colorée)
 }
 
 export interface DroneBuilding extends Rect {
@@ -56,6 +73,8 @@ export interface DroneStatic {
   motorCount: number;
   hasGps: boolean;
   hasLidar: boolean;
+  /** Erreur de position du GPS en m (null = pas de GPS). */
+  gpsAcc: number | null;
   start: { x: number; y: number };
 }
 
@@ -66,4 +85,6 @@ export interface DroneLive {
   scan: { a: number; d: number; r: number }[];
   waypoint: [number, number] | null;
   crashed: boolean;
+  /** Position renvoyée par le GPS (null = pas de GPS). */
+  fix: { x: number; y: number } | null;
 }

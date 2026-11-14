@@ -3,14 +3,15 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Sensor } from "@/data/types";
+import { capabilities, driftFor, gasLevel, gpsOffset, loadFactor } from "@/lib/sensor-effects";
 import type { Analysis } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
-import type { CameraMode, GroundLive, GroundStatic, ViewMode } from "./scene-types";
+import type { CameraMode, Disc, GroundLive, GroundStatic, ViewMode } from "./scene-types";
 import { CAMERA_HINT, Scene3DBoundary, SceneMessage, ViewControls } from "./scene-view";
-import { castRay, circleRect, distToPolyline, drawGrid, readTokens, setupCanvas, wrapAngle, type Rect, type Tokens } from "./sim-utils";
+import { castRay, circleRect, distToPolyline, drawGrid, readTokens, setupCanvas, withAlpha, wrapAngle, type Rect, type Tokens } from "./sim-utils";
 
-type Scenario = "arena" | "track" | "sumo";
+type Scenario = "arena" | "track" | "sumo" | "mission";
 type Tele = { label: string; value: string; tone?: "ok" | "warn" | "bad" }[];
 
 const GroundScene3D = lazy(() => import("@/components/sim3d/ground-scene"));
@@ -34,6 +35,10 @@ interface World {
   track?: [number, number][];
   lineW?: number;
   ringR?: number;
+  targets: (Disc & { good: boolean })[];
+  zones: Disc[];
+  gas?: Disc;
+  waypoints: [number, number][];
 }
 
 const OBSTACLES: Rect[] = [
@@ -43,6 +48,15 @@ const OBSTACLES: Rect[] = [
   { x: 0.82, y: 0.45, w: 0.07, h: 0.32 },
   { x: 0.33, y: 0.78, w: 0.05, h: 0.22 },
   { x: 0.45, y: 0.28, w: 0.06, h: 0.06 },
+];
+
+// Cibles colorées de l'arène : le vert rapporte, le rouge pénalise.
+const TARGETS: { x: number; y: number; good: boolean }[] = [
+  { x: 0.72, y: 0.2, good: true },
+  { x: 0.26, y: 0.86, good: true },
+  { x: 0.9, y: 0.72, good: true },
+  { x: 0.5, y: 0.44, good: false },
+  { x: 0.16, y: 0.28, good: false },
 ];
 
 function walls(W: number, H: number): Rect[] {
@@ -55,6 +69,12 @@ function walls(W: number, H: number): Rect[] {
   ];
 }
 
+// Zone de freinage : disque rouge posé sur la piste, reconnu par un capteur de couleur.
+function zoneAt(pts: [number, number][], i: number, r: number): Disc {
+  const [x, y] = pts[i]!;
+  return { x, y, r };
+}
+
 function makeWorld(s: Scenario, len: number): World {
   if (s === "arena") {
     const W = Math.min(14, Math.max(3, len * 35));
@@ -64,6 +84,9 @@ function makeWorld(s: Scenario, len: number): World {
       H,
       rects: [...walls(W, H), ...OBSTACLES.map((r) => ({ x: r.x * W, y: r.y * H, w: r.w * W, h: r.h * H }))],
       start: { x: W * 0.08, y: H * 0.5, th: 0, v: 0, w: 0, vs: 0 },
+      targets: TARGETS.map((t) => ({ x: t.x * W, y: t.y * H, r: Math.min(W, H) * 0.045, good: t.good })),
+      zones: [],
+      waypoints: [],
     };
   }
   if (s === "track") {
@@ -77,11 +100,41 @@ function makeWorld(s: Scenario, len: number): World {
     }
     const [x0, y0] = pts[0]!;
     const [x1, y1] = pts[1]!;
-    return { W, H, rects: walls(W, H), track: pts, lineW: Math.max(0.019, len * 0.15), start: { x: x0, y: y0, th: Math.atan2(y1 - y0, x1 - x0), v: 0, w: 0, vs: 0 } };
+    const lineW = Math.max(0.019, len * 0.15);
+    return {
+      W,
+      H,
+      rects: walls(W, H),
+      track: pts,
+      lineW,
+      start: { x: x0, y: y0, th: Math.atan2(y1 - y0, x1 - x0), v: 0, w: 0, vs: 0 },
+      targets: [],
+      zones: [zoneAt(pts, 62, lineW * 1.9), zoneAt(pts, 168, lineW * 1.9)],
+      waypoints: [],
+    };
+  }
+  if (s === "mission") {
+    // Plein air : grand champ, un nuage de gaz invisible entre le départ et les balises GPS.
+    const W = Math.min(22, Math.max(6, len * 70));
+    const H = W * 0.7;
+    return {
+      W,
+      H,
+      rects: [...walls(W, H), ...OBSTACLES.map((r) => ({ x: r.x * W, y: r.y * H, w: r.w * W, h: r.h * H }))],
+      start: { x: W * 0.08, y: H * 0.14, th: 0, v: 0, w: 0, vs: 0 },
+      targets: [],
+      zones: [],
+      gas: { x: W * 0.5, y: H * 0.45, r: Math.min(W, H) * 0.26 },
+      waypoints: [
+        [W * 0.86, H * 0.22],
+        [W * 0.82, H * 0.8],
+        [W * 0.18, H * 0.82],
+      ],
+    };
   }
   const D = len < 0.15 ? 0.77 : 1.54;
   const W = D * 1.3;
-  return { W, H: W, rects: [], ringR: D / 2, start: { x: W / 2 - D * 0.25, y: W / 2, th: 0, v: 0, w: 0, vs: 0 } };
+  return { W, H: W, rects: [], ringR: D / 2, start: { x: W / 2 - D * 0.25, y: W / 2, th: 0, v: 0, w: 0, vs: 0 }, targets: [], zones: [], waypoints: [] };
 }
 
 function rayCircle(ox: number, oy: number, a: number, cx: number, cy: number, r: number): number {
@@ -124,15 +177,21 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
   const lineSensor = parts.sensors.find((s) => s.kind === "line" || s.kind === "color");
   const isMecanum = parts.propulsion?.kind === "mecanum";
   const isLeg = parts.propulsion?.kind === "leg";
+  // Ce que les capteurs montés changent vraiment au comportement.
+  const caps = capabilities(parts.sensors);
 
   const autoReason =
     scenario === "track"
       ? lineSensor
         ? null
         : "Ajoutez un capteur de ligne (QTR-8RC, TCRT5000…) pour le suivi automatique."
-      : distSensors.length || lidar
-        ? null
-        : "Ajoutez un capteur de distance ou un lidar pour la conduite automatique.";
+      : scenario === "mission"
+        ? caps.gpsAcc == null
+          ? "Ajoutez un GPS (NEO-6M, NEO-M8N, ZED-F9P…) pour la navigation par balises."
+          : null
+        : distSensors.length || lidar
+          ? null
+          : "Ajoutez un capteur de distance ou un lidar pour la conduite automatique.";
 
   useEffect(() => {
     wrapRef.current?.focus({ preventScroll: true });
@@ -156,10 +215,13 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     const me: Body = { ...world.start };
     const opp: Body = { x: world.W / 2 + (world.ringR ?? 0) * 0.5, y: world.H / 2, th: Math.PI, v: 0, w: 0, vs: 0 };
     const oppMass = Math.max(100, analysis.massG * 0.9);
+    const targets = world.targets.map((t) => ({ ...t }));
+    const drift = driftFor(caps.imu.driftDamping);
     let usedAh = 0;
     let dist = 0;
     let collisions = 0;
     let touching = false;
+    let pushing = false;
     let simT = 0;
     let lastErr = 0;
     let turnDir = 1;
@@ -174,6 +236,30 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let roundOver = 0;
     let gait = 0;
     let sumoPhase = 0;
+    // --- réflexes et lectures de capteurs ---
+    let bumperBack = 0; // m restant à parcourir en marche arrière
+    let bumperTurn = 0; // rad restants à pivoter
+    let bumperDir = 1;
+    let bumps = 0;
+    let gas = 0; // concentration lue
+    let gasT = 0; // demi-tour d'évitement en cours
+    let contaminated = false;
+    let fix: { x: number; y: number } | null = null; // position perçue par le GPS
+    let fixT = 0;
+    let holdTh = world.start.th; // cap de référence quand on roule droit
+    let wpIdx = 0;
+    let wpDone = 0;
+    let zoneStop = 0;
+    let zoneIdx = -1;
+    let stops = 0;
+    let missed = 0;
+    let inZone = false;
+    let found = 0;
+    let badHits = 0;
+    let target: [number, number] | null = null;
+    let accelG = 0; // secousses lues par la centrale inertielle
+    let tilt = 0; // inclinaison due au pivotement
+    let prevV = 0;
     const mapCells = new Map<string, [number, number]>();
     const cell = world.W / 120;
     let lastTele = 0;
@@ -199,6 +285,13 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       hasLidar: !!lidar,
       hasLine: !!lineSensor,
       hasCamera: parts.sensors.some((s) => s.kind === "camera"),
+      hasBumper: caps.bumper,
+      hasColor: caps.color,
+      hasGas: caps.gas,
+      gpsAcc: caps.gpsAcc,
+      targets: world.targets,
+      zones: world.zones,
+      gas: world.gas,
     });
     liveRef.current = null;
 
@@ -207,6 +300,8 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       Object.assign(opp, { x: world.W / 2 + (world.ringR ?? 0) * 0.5, y: world.H / 2, th: Math.PI, v: 0, w: 0, vs: 0 });
       roundOver = 0;
       sumoPhase = 0;
+      bumperBack = 0;
+      bumperTurn = 0;
     };
 
     const sensorRays = (b: Body) =>
@@ -268,8 +363,40 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       const rays = sensorRays(me);
       const scan = lidarScan(me);
       const lineR = lineReadings(me);
+      target = null;
+
+      // le GPS ne donne pas la position réelle : il la mesure, avec l'erreur de son module
+      fixT -= dt;
+      if (fixT <= 0) {
+        fixT = 0.2; // 5 Hz, comme un vrai module
+        if (caps.gpsAcc == null) fix = null;
+        else {
+          const [ex, ey] = gpsOffset(caps.gpsAcc);
+          fix = { x: me.x + ex, y: me.y + ey };
+        }
+      }
+      // un nuage de gaz n'existe pour le robot que si un capteur le sent
+      const rawGas = world.gas ? gasLevel(me.x, me.y, world.gas) : 0;
+      gas = caps.gas ? rawGas : 0;
+      if (rawGas > 0.12 && !caps.gas) contaminated = true;
 
       if (autoOn) {
+        const sector = (lo: number, hi: number) => {
+          let m = Infinity;
+          for (const s of scan) {
+            const rel = wrapAngle(s.a - me.th);
+            if (rel >= lo && rel <= hi) m = Math.min(m, s.d);
+          }
+          for (const r of rays) {
+            if (r.off >= lo - 0.3 && r.off <= hi + 0.3) m = Math.min(m, r.d);
+          }
+          return m;
+        };
+        const front = sector(-0.45, 0.45);
+        const left = sector(-1.4, -0.3);
+        const right = sector(0.3, 1.4);
+        const safe = Math.max(0.25, len * 2.5);
+
         if (scenario === "track") {
           const act = lineR.filter((r) => r.on);
           const span = Math.max(1e-3, Math.abs(lineR[lineR.length - 1]?.off ?? 1e-3));
@@ -277,51 +404,99 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
           else lastErr = Math.sign(lastErr || 1) * 1.2;
           turn = Math.max(-1, Math.min(1, lastErr * 1.6));
           thr = act.length ? 1 - 0.5 * Math.min(1, Math.abs(lastErr)) : 0.35;
-        } else {
-          const sector = (lo: number, hi: number) => {
-            let m = Infinity;
-            for (const s of scan) {
-              const rel = wrapAngle(s.a - me.th);
-              if (rel >= lo && rel <= hi) m = Math.min(m, s.d);
-            }
-            for (const r of rays) {
-              if (r.off >= lo - 0.3 && r.off <= hi + 0.3) m = Math.min(m, r.d);
-            }
-            return m;
-          };
-          const front = sector(-0.45, 0.45);
-          const left = sector(-1.4, -0.3);
-          const right = sector(0.3, 1.4);
-          if (scenario === "sumo") {
-            const edge = lineR.some((r) => r.on);
-            const sees = rays.some((r) => r.d < r.r * 0.98 && rayCircle(r.ox, r.oy, r.a, opp.x, opp.y, rad * 1.4) < Infinity) || scan.some((s) => s.d < s.r && rayCircle(me.x, me.y, s.a, opp.x, opp.y, rad * 1.2) < Infinity && Math.abs(wrapAngle(s.a - me.th)) < 0.5);
-            if (sumoPhase > 0) {
-              sumoPhase -= dt;
-              thr = -0.8;
-              turn = 0.8;
-            } else if (edge) {
-              sumoPhase = 0.5;
-            } else if (sees) {
+          // zone rouge au sol : seul un capteur de couleur sait qu'il faut s'y arrêter
+          if (zoneStop > 0) {
+            zoneStop -= dt;
+            thr = 0;
+            turn = 0;
+          } else if (caps.color) {
+            let zi = -1;
+            world.zones.forEach((z, i) => {
+              if (Math.hypot(z.x - me.x, z.y - me.y) < z.r + rad * 1.6) zi = i;
+            });
+            if (zi >= 0) {
+              if (zoneIdx !== zi) {
+                zoneIdx = zi;
+                stops++;
+              }
+              const z = world.zones[zi]!;
+              if (Math.hypot(z.x - me.x, z.y - me.y) < z.r) {
+                zoneStop = 1.1;
+                thr = 0;
+                turn = 0;
+              } else {
+                thr *= 0.25;
+              }
+            } else zoneIdx = -1;
+          }
+        } else if (scenario === "mission") {
+          if (gasT > 0) {
+            gasT -= dt;
+            thr = -0.7;
+            turn = 0.9;
+          } else {
+            const wp = world.waypoints[wpIdx];
+            if (wp && fix) {
+              target = wp;
+              // le robot suit la position que son GPS lui renvoie, pas la position réelle
+              const want = Math.atan2(wp[1] - fix.y, wp[0] - fix.x);
               thr = 1;
-              turn = 0;
+              turn = Math.max(-1, Math.min(1, wrapAngle(want - me.th) * 1.5));
+              if (front < safe) {
+                thr = 0;
+                turn = left > right ? -1 : 1;
+              }
+              if (gas > 0.25) gasT = 0.8;
             } else {
               thr = 0.1;
               turn = 0.9;
             }
+          }
+        } else if (scenario === "sumo") {
+          const edge = lineR.some((r) => r.on);
+          const sees = rays.some((r) => r.d < r.r * 0.98 && rayCircle(r.ox, r.oy, r.a, opp.x, opp.y, rad * 1.4) < Infinity) || scan.some((s) => s.d < s.r && rayCircle(me.x, me.y, s.a, opp.x, opp.y, rad * 1.2) < Infinity && Math.abs(wrapAngle(s.a - me.th)) < 0.5);
+          if (sumoPhase > 0) {
+            sumoPhase -= dt;
+            thr = -0.8;
+            turn = 0.8;
+          } else if (edge) {
+            sumoPhase = 0.5;
+          } else if (sees) {
+            thr = 1;
+            turn = 0;
           } else {
-            const safe = Math.max(0.25, len * 2.5);
-            if (avoidT > 0) {
-              avoidT -= dt;
-              thr = 0;
-              turn = turnDir;
-            } else if (front < safe) {
-              turnDir = left > right ? -1 : right > left ? 1 : turnDir;
-              avoidT = 0.35;
-              thr = 0;
-              turn = turnDir;
-            } else {
-              thr = Math.min(1, front / (safe * 2.5));
-              turn = isFinite(left) && isFinite(right) ? Math.max(-0.4, Math.min(0.4, (right - left) * 0.3)) : 0;
+            thr = 0.1;
+            turn = 0.9;
+          }
+        } else {
+          if (avoidT > 0) {
+            avoidT -= dt;
+            thr = 0;
+            turn = turnDir;
+          } else if (front < safe) {
+            turnDir = left > right ? -1 : right > left ? 1 : turnDir;
+            avoidT = 0.35;
+            thr = 0;
+            turn = turnDir;
+          } else {
+            thr = Math.min(1, front / (safe * 2.5));
+            turn = isFinite(left) && isFinite(right) ? Math.max(-0.4, Math.min(0.4, (right - left) * 0.3)) : 0;
+          }
+          // caméra IA ou capteur couleur : le robot cherche le vert, fuit le rouge
+          if (caps.color && targets.length) {
+            const seen = targets
+              .map((t) => ({ t, d: Math.hypot(t.x - me.x, t.y - me.y) }))
+              .filter((o) => o.d < caps.colorRange + o.t.r)
+              .sort((a, b) => a.d - b.d);
+            const good = seen.find((o) => o.t.good);
+            const bad = seen.find((o) => !o.t.good);
+            if (good && front > safe * 1.15) {
+              target = [good.t.x, good.t.y];
+              thr = 1;
+              turn = Math.max(-1, Math.min(1, wrapAngle(Math.atan2(good.t.y - me.y, good.t.x - me.x) - me.th) * 1.6));
+            } else if (bad) {
+              thr = Math.max(thr, 0.45);
+              turn = Math.max(-1, Math.min(1, wrapAngle(Math.atan2(me.y - bad.t.y, me.x - bad.t.x) - me.th) * 1.6));
             }
           }
         }
@@ -330,6 +505,16 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         turn = (k.has("ArrowRight") ? 1 : 0) - (k.has("ArrowLeft") ? 1 : 0);
         if (isMecanum) strafe = (k.has("KeyE") ? 1 : 0) - (k.has("KeyA") ? 1 : 0);
       }
+      // réflexe matériel : le pare-chocs coupe la consigne logicielle
+      if (bumperBack > 0) {
+        thr = -0.85;
+        turn = 0;
+        strafe = 0;
+      } else if (bumperTurn > 0) {
+        thr = 0;
+        turn = bumperDir;
+        strafe = 0;
+      }
       if (!powered || (scenario === "sumo" && roundOver > 0)) {
         thr = 0;
         turn = 0;
@@ -337,14 +522,27 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       }
 
       const sag = 0.75 + 0.25 * soc;
-      const ramp = (cur: number, target: number, rate: number) => cur + Math.max(-rate * dt, Math.min(rate * dt, target - cur));
-      me.v = ramp(me.v, thr * vmax * sag, accel);
+      const ramp = (cur: number, want: number, rate: number) => cur + Math.max(-rate * dt, Math.min(rate * dt, want - cur));
+      // sans encodeurs, rien ne corrige : le poids et ce qu'on poussent font chuter la vitesse
+      pushing = touching;
+      const load = loadFactor(analysis.massG, pushing, caps.encoders);
+      me.v = ramp(me.v, thr * vmax * sag * load, accel * (caps.encoders ? 1 : 0.85));
       me.w = ramp(me.w, turn * wmax, wmax * 4);
-      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag, accel);
+      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accel);
 
       const px = me.x;
       const py = me.y;
       me.th = wrapAngle(me.th + me.w * dt);
+      // sans centrale inertielle, les roues patinent dans les virages et le cap dérive
+      if (drift.slip > 0 || drift.wander > 0) {
+        const act = Math.min(1, (Math.abs(me.v) + Math.abs(me.vs)) / vmax);
+        me.th = wrapAngle(me.th - me.w * dt * drift.slip * (0.4 + 0.6 * act) + (Math.random() - 0.5) * drift.wander * dt * (0.5 + act));
+      }
+      // avec un cap absolu, le contrôleur recalle dès qu'il roule en ligne droite
+      if (caps.imu.headingLock) {
+        if (Math.abs(turn) < 0.15) me.th = wrapAngle(me.th + wrapAngle(holdTh - me.th) * Math.min(1, dt * 5));
+        else holdTh = me.th;
+      }
       me.x += (Math.cos(me.th) * me.v - Math.sin(me.th) * me.vs) * dt;
       me.y += (Math.sin(me.th) * me.v + Math.cos(me.th) * me.vs) * dt;
       const hit = world.rects.some((r) => circleRect(me.x, me.y, rad, r));
@@ -354,10 +552,24 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         me.v = 0;
         me.vs = 0;
         if (!touching) collisions++;
+        // un micro-rupteur monté sur le châssis déclenche un recul réflexe, même sans capteur de distance
+        if (caps.bumper && bumperBack <= 0 && bumperTurn <= 0) {
+          bumperBack = 0.3;
+          bumperTurn = Math.PI / 2;
+          bumperDir = me.w >= 0 ? 1 : -1;
+          bumps++;
+        }
       }
       touching = hit;
-      dist += Math.hypot(me.x - px, me.y - py);
+      const moved = Math.hypot(me.x - px, me.y - py);
+      if (bumperBack > 0) bumperBack = Math.max(0, bumperBack - moved);
+      else if (bumperTurn > 0) bumperTurn = Math.max(0, bumperTurn - Math.abs(me.w) * dt);
+      dist += moved;
       gait += (Math.abs(me.v) + Math.abs(me.w) * wid) * dt * 25;
+      // ce que verraient une centrale inertielle et un inclinomètre
+      accelG = accelG * 0.92 + (Math.abs(me.v - prevV) / Math.max(1e-4, dt) / 9.81) * 0.08;
+      tilt = tilt * 0.9 + Math.abs(Math.atan2(me.v * me.w, 9.81)) * (180 / Math.PI) * 0.1;
+      prevV = me.v;
 
       const activity = Math.min(1, (Math.abs(me.v) + Math.abs(me.vs)) / vmax + (Math.abs(me.w) / wmax) * 0.5);
       usedAh += ((elecA + motorA * (0.15 + 0.85 * activity)) * dt * TIME_SCALE) / 3600;
@@ -409,8 +621,8 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         } else {
           // adversaire : vise le joueur, recule près du bord
           const dOpp = Math.hypot(opp.x - cx, opp.y - cy);
-          const target = dOpp > world.ringR * 0.82 ? Math.atan2(cy - opp.y, cx - opp.x) : Math.atan2(me.y - opp.y, me.x - opp.x);
-          const err = wrapAngle(target - opp.th);
+          const aim = dOpp > world.ringR * 0.82 ? Math.atan2(cy - opp.y, cx - opp.x) : Math.atan2(me.y - opp.y, me.x - opp.x);
+          const err = wrapAngle(aim - opp.th);
           const ovmax = Math.min(0.8, Math.max(0.25, vmax * 0.8));
           opp.w = Math.max(-3, Math.min(3, err * 4));
           opp.v = Math.abs(err) < 0.6 ? ovmax : ovmax * 0.2;
@@ -432,6 +644,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
             me.y -= ny * overlap * (1 - share);
             opp.x += nx * overlap * share;
             opp.y += ny * overlap * share;
+            pushing = true; // le bras de fer coûte de la vitesse
           }
           const meOut = Math.hypot(me.x - cx, me.y - cy) > world.ringR;
           const oppOut = Math.hypot(opp.x - cx, opp.y - cy) > world.ringR;
@@ -443,6 +656,31 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
           }
         }
       }
+      // arrivée aux balises GPS, jugée sur la position réelle et non sur celle perçue
+      if (scenario === "mission") {
+        const wp = world.waypoints[wpIdx];
+        if (wp && Math.hypot(wp[0] - me.x, wp[1] - me.y) < Math.max(0.35, rad * 1.8)) {
+          wpDone++;
+          wpIdx = (wpIdx + 1) % world.waypoints.length;
+        }
+        target = world.waypoints[wpIdx] ?? null;
+      }
+      // cibles colorées : le vert rapporte, le rouge coûte
+      if (caps.color) {
+        for (let i = targets.length - 1; i >= 0; i--) {
+          const t = targets[i]!;
+          if (Math.hypot(t.x - me.x, t.y - me.y) < rad + t.r) {
+            if (t.good) found++;
+            else badHits++;
+            targets.splice(i, 1);
+          }
+        }
+      }
+      // une zone rouge franchie sans capteur de couleur est une zone manquée
+      const nowZone = world.zones.some((z) => Math.hypot(z.x - me.x, z.y - me.y) < z.r);
+      if (nowZone && !inZone && !caps.color && Math.abs(me.v) > 0.12) missed++;
+      inZone = nowZone;
+
       simT += dt;
       return { rays, scan, lineR, soc };
     };
@@ -457,6 +695,10 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         map: mapCells,
         cell,
         gait,
+        fix,
+        gas,
+        bumper: bumperBack > 0 || bumperTurn > 0,
+        target,
       };
       const canvas = canvasRef.current;
       if (!canvas || viewRef.current !== "2d") return;
@@ -506,6 +748,39 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       ctx.strokeStyle = tk.border;
       ctx.lineWidth = px * 1.5;
       for (const r of world.rects) ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+      // nuage de gaz : à peine visible sans capteur, surligné quand il est lu
+      if (world.gas) {
+        const g = world.gas;
+        ctx.fillStyle = withAlpha(tk.success, caps.gas ? 0.2 : 0.06);
+        ctx.beginPath();
+        ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+        ctx.fill();
+        if (gas > 0.05) {
+          ctx.strokeStyle = withAlpha(tk.danger, 0.4 + gas * 0.6);
+          ctx.lineWidth = px * 2;
+          ctx.beginPath();
+          ctx.arc(g.x, g.y, g.r * (1 - gas * 0.6), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+      // zones de freinage rouges sur la piste
+      for (const z of world.zones) {
+        ctx.fillStyle = withAlpha(tk.danger, 0.22);
+        ctx.beginPath();
+        ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = tk.danger;
+        ctx.lineWidth = px * 1.5;
+        ctx.stroke();
+      }
+      // cibles colorées de l'arène
+      for (const t of targets) {
+        ctx.fillStyle = withAlpha(t.good ? tk.success : tk.danger, 0.55);
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // carte lidar
       if (mapCells.size) {
@@ -594,6 +869,34 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       if (scenario === "sumo") drawBot(opp, tk.danger, false);
       drawBot(me, tk.primary, true);
 
+      // position perçue par le GPS, balise visée, réflexe du pare-chocs
+      if (fix) {
+        const cr = Math.max(px * 4, rad * 0.5);
+        const ar = Math.max(px * 7, rad * 0.8);
+        ctx.strokeStyle = tk.signal;
+        ctx.lineWidth = px * 1.5;
+        ctx.beginPath();
+        ctx.arc(fix.x, fix.y, cr, 0, Math.PI * 2);
+        ctx.moveTo(fix.x - ar, fix.y);
+        ctx.lineTo(fix.x + ar, fix.y);
+        ctx.moveTo(fix.x, fix.y - ar);
+        ctx.lineTo(fix.x, fix.y + ar);
+        ctx.stroke();
+      }
+      if (target) {
+        ctx.strokeStyle = tk.warning;
+        ctx.lineWidth = px * 2;
+        ctx.beginPath();
+        ctx.arc(target[0], target[1], Math.max(px * 6, rad * 0.9), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (bumperBack > 0 || bumperTurn > 0) {
+        ctx.fillStyle = withAlpha(tk.danger, 0.45);
+        ctx.beginPath();
+        ctx.arc(me.x, me.y, rad * 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       for (const r of s.lineR) {
         ctx.fillStyle = r.on ? tk.success : tk.muted;
         ctx.beginPath();
@@ -625,15 +928,44 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
           items.push({ label: "Collisions", value: String(collisions), tone: collisions ? "warn" : "ok" });
           if (s!.rays.length) items.push({ label: "Obstacle devant", value: `${Math.min(...s!.rays.map((r) => r.d)).toFixed(2)} m` });
           if (lidar) items.push({ label: "Points cartographiés", value: String(mapCells.size) });
+          if (caps.color) items.push({ label: "Cibles", value: `${found} vert / ${badHits} rouge`, tone: badHits ? "bad" : "ok" });
         } else if (scenario === "track") {
           items.push({ label: "Tours", value: String(lap) });
           items.push({ label: "Meilleur tour", value: isFinite(bestLap) ? `${bestLap.toFixed(1)} s` : "—" });
           items.push({ label: "Hors piste", value: `${offTrack.toFixed(1)} s`, tone: offTrack > 1 ? "warn" : "ok" });
           if (s!.lineR.length) items.push({ label: "Capteurs sur la ligne", value: `${s!.lineR.filter((r) => r.on).length} / ${s!.lineR.length}` });
+          if (caps.color) items.push({ label: "Arrêts en zone rouge", value: String(stops), tone: "ok" });
+          else items.push({ label: "Zones rouges manquées", value: String(missed), tone: missed ? "bad" : "ok" });
+        } else if (scenario === "mission") {
+          items.push(wpDone ? { label: "Balises atteintes", value: String(wpDone), tone: "ok" as const } : { label: "Balises atteintes", value: String(wpDone) });
+          items.push({ label: "Balise courante", value: `${wpIdx + 1} / ${world.waypoints.length}` });
+          const wp = world.waypoints[wpIdx];
+          if (wp && fix) items.push({ label: "Distance lue", value: `${Math.hypot(wp[0] - fix.x, wp[1] - fix.y).toFixed(1)} m` });
+          if (world.gas) items.push({ label: "Gaz", value: caps.gas ? `${Math.round(gas * 100)} %` : "non détecté", tone: gas > 0.3 ? "bad" : caps.gas ? "ok" : "warn" });
+          if (contaminated) items.push({ label: "Zone toxique", value: "traversée", tone: "bad" });
         } else {
           items.push({ label: "Score", value: `${score.me} – ${score.opp}`, tone: score.me >= score.opp ? "ok" : "bad" });
           items.push({ label: "Masse adversaire", value: `${Math.round(oppMass)} g` });
         }
+        // ce que les capteurs montés apportent vraiment
+        const heading = ((me.th * 180) / Math.PI + 360) % 360;
+        items.push(
+          caps.imu.headingLock
+            ? { label: "Cap (boussole)", value: `${heading.toFixed(0)}°`, tone: "ok" as const }
+            : { label: "Cap (odométrie)", value: `${heading.toFixed(0)}°` },
+        );
+        if (caps.imu.level > 0) {
+          items.push({ label: "Accélération", value: `${accelG.toFixed(2)} g` });
+          items.push({ label: "Inclinaison", value: `${tilt.toFixed(0)}°` });
+        }
+        items.push({ label: "Régulation vitesse", value: caps.encoders ? "encodeurs" : "aucune", tone: caps.encoders ? "ok" : "warn" });
+        if (caps.bumper) items.push({ label: "Chocs pare-chocs", value: String(bumps), tone: bumps ? "warn" : "ok" });
+        if (caps.gpsAcc != null)
+          items.push({
+            label: "Précision GPS",
+            value: caps.gpsAcc < 0.1 ? `± ${Math.round(caps.gpsAcc * 100)} cm` : `± ${caps.gpsAcc.toFixed(1)} m`,
+            tone: caps.gpsAcc <= 0.05 ? "ok" : caps.gpsAcc <= 1.5 ? "warn" : "bad",
+          });
         if (soc <= 0) items.push({ label: "État", value: "Batterie vide", tone: "bad" });
         setTele(items);
       }
@@ -655,6 +987,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     ["arena", "Arène d'obstacles"],
     ["track", "Piste de suivi de ligne"],
     ["sumo", "Combat de sumo"],
+    ["mission", "Mission d'inspection"],
   ];
 
   return (
@@ -673,7 +1006,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         <div className="ml-auto flex items-center gap-2">
           <label className={cn("flex items-center gap-2 text-sm", autoReason && "opacity-50")}>
             <Switch checked={auto && !autoReason} disabled={!!autoReason} onCheckedChange={setAuto} />
-            {scenario === "track" ? "Suivi automatique" : scenario === "sumo" ? "Combat automatique" : "Évitement automatique"}
+            {scenario === "track" ? "Suivi automatique" : scenario === "sumo" ? "Combat automatique" : scenario === "mission" ? "Navigation automatique" : "Évitement automatique"}
           </label>
           <Button size="sm" variant="secondary" onClick={() => setPaused((p) => !p)} aria-label={paused ? "Reprendre" : "Pause"}>
             {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}

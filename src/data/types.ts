@@ -105,6 +105,9 @@ export interface Sensor extends Base {
   fov?: number; // degrés
   rays?: number; // nb de rayons simulés
   needsVision?: boolean;
+  accuracy?: number; // m : erreur de position du GPS
+  aiVision?: boolean; // caméra IA : reconnaît couleurs et objets
+  axes?: 6 | 9; // IMU : 6 axes (accéléro + gyros) ou 9 (+boussole intégrée)
 }
 
 export interface Propulsion extends Base {
