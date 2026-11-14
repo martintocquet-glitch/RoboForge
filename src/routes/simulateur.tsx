@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
+import { DroneSim } from "@/components/sim/drone-sim";
 import { GroundSim } from "@/components/sim/ground-sim";
 import { Button } from "@/components/ui/button";
 import { useBuild } from "@/lib/build-store";
@@ -47,9 +48,11 @@ function Simulateur() {
           </div>
         ) : type.sim === "ground" ? (
           <GroundSim analysis={analysis} />
+        ) : type.sim === "drone" ? (
+          <DroneSim analysis={analysis} />
         ) : (
           <div className="rounded-md border border-border bg-panel p-6 text-muted-foreground">
-            La simulation {type.sim === "drone" ? "de vol" : "du bras robotique"} n'est pas encore disponible. Les robots au sol peuvent déjà être pilotés.
+            La simulation du bras robotique n'est pas encore disponible. Les robots au sol et les drones peuvent déjà être pilotés.
           </div>
         )}
       </div>
