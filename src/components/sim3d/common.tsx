@@ -378,14 +378,14 @@ export function ReadySignal() {
 }
 
 export class Scene3DBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+  override state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
-  componentDidCatch(err: unknown) {
+  override componentDidCatch(err: unknown) {
     console.error("Vue 3D indisponible :", err);
   }
-  render() {
+  override render() {
     return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
