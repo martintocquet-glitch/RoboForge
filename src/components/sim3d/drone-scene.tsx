@@ -1,4 +1,3 @@
-import { Html } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
@@ -131,6 +130,34 @@ function DroneModel({ st, live, colors }: { st: DroneStatic; live: MutableRefObj
   );
 }
 
+// Étiquette de hauteur dessinée sur une texture (toujours face à la caméra).
+function HeightLabel({ text, y }: { text: string; y: number }) {
+  const tex = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = 160;
+    c.height = 64;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "rgba(28,30,34,0.88)";
+    g.beginPath();
+    g.roundRect(4, 4, 152, 56, 10);
+    g.fill();
+    g.fillStyle = "#f3f1ec";
+    g.font = "600 34px 'IBM Plex Mono', monospace";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(text, 80, 34);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }, [text]);
+  useEffect(() => () => tex.dispose(), [tex]);
+  return (
+    <sprite position-y={y} scale={[1.5, 0.6, 1]}>
+      <spriteMaterial map={tex} transparent depthWrite={false} />
+    </sprite>
+  );
+}
+
 function City({ st, colors }: { st: DroneStatic; colors: SceneColors }) {
   const { W, H } = st;
   const ground = useConcreteTexture(W, H, 1);
@@ -198,9 +225,7 @@ function City({ st, colors }: { st: DroneStatic; colors: SceneColors }) {
                 <meshStandardMaterial key={k} attach={`material-${k}`} map={m.map} roughness={0.85} color={k === 2 ? MAT.concreteDark : "#ffffff"} />
               ))}
             </mesh>
-            <Html position={[0, b.alt + 0.5, 0]} center distanceFactor={18} zIndexRange={[10, 0]}>
-              <div className="pointer-events-none whitespace-nowrap rounded bg-card/90 px-1.5 py-0.5 font-mono text-xs text-foreground shadow-panel">{b.alt} m</div>
-            </Html>
+            <HeightLabel text={`${b.alt} m`} y={b.alt + 0.6} />
           </group>
         );
       })}
