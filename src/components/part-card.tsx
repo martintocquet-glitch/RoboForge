@@ -3,7 +3,7 @@ import type { Part } from "@/data/types";
 import { formatMass, formatPrice, partKindLabel, partSpecs } from "@/lib/part-specs";
 import { cn } from "@/lib/utils";
 
-export function PartCard({ part, selected, dimmed, note, action, compact }: { part: Part; selected?: boolean; dimmed?: boolean; note?: string; action?: ReactNode; compact?: boolean }) {
+export function PartCard({ part, selected, dimmed, note, action, compact }: { part: Part; selected?: boolean | undefined; dimmed?: boolean | undefined; note?: string | undefined; action?: ReactNode; compact?: boolean | undefined }) {
   const kind = partKindLabel(part);
   const specs = partSpecs(part);
   return (

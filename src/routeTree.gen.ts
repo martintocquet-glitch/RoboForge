@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AtelierRouteImport } from './routes/atelier'
 import { Route as CatalogueRouteImport } from './routes/catalogue'
+import { Route as SimulateurRouteImport } from './routes/simulateur'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const CatalogueRoute = CatalogueRouteImport.update({
   path: '/catalogue',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SimulateurRoute = SimulateurRouteImport.update({
+  id: '/simulateur',
+  path: '/simulateur',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/atelier': typeof AtelierRoute
   '/catalogue': typeof CatalogueRoute
+  '/simulateur': typeof SimulateurRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/atelier': typeof AtelierRoute
   '/catalogue': typeof CatalogueRoute
+  '/simulateur': typeof SimulateurRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/atelier': typeof AtelierRoute
   '/catalogue': typeof CatalogueRoute
+  '/simulateur': typeof SimulateurRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/atelier' | '/catalogue'
+  fullPaths: '/' | '/atelier' | '/catalogue' | '/simulateur'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/atelier' | '/catalogue'
-  id: '__root__' | '/' | '/atelier' | '/catalogue'
+  to: '/' | '/atelier' | '/catalogue' | '/simulateur'
+  id: '__root__' | '/' | '/atelier' | '/catalogue' | '/simulateur'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AtelierRoute: typeof AtelierRoute
   CatalogueRoute: typeof CatalogueRoute
+  SimulateurRoute: typeof SimulateurRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CatalogueRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/simulateur': {
+      id: '/simulateur'
+      path: '/simulateur'
+      fullPath: '/simulateur'
+      preLoaderRoute: typeof SimulateurRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AtelierRoute: AtelierRoute,
   CatalogueRoute: CatalogueRoute,
+  SimulateurRoute: SimulateurRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
