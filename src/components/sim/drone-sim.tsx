@@ -1,14 +1,18 @@
 import { Pause, Play, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Analysis } from "@/lib/robot-calc";
 import { GRAVITY } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
+import type { CameraMode, DroneLive, DroneStatic, ViewMode } from "./scene-types";
+import { CAMERA_HINT, Scene3DBoundary, SceneMessage, ViewControls } from "./scene-view";
 import { castRay, circleRect, drawGrid, readTokens, setupCanvas, withAlpha, type Rect, type Tokens } from "./sim-utils";
 
 type Tele = { label: string; value: string; tone?: "ok" | "warn" | "bad" }[];
+
+const DroneScene3D = lazy(() => import("@/components/sim3d/drone-scene"));
 
 const TIME_SCALE = 20; // la batterie se vide 20× plus vite pour être visible
 const CEILING = 12; // m
@@ -43,6 +47,12 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
   const [resetKey, setResetKey] = useState(0);
   const [tele, setTele] = useState<Tele>([]);
   const [banner, setBanner] = useState<string | null>(null);
+  const [view, setView] = useState<ViewMode>("3d");
+  const [camera, setCamera] = useState<CameraMode>("chase");
+  const [st, setSt] = useState<DroneStatic | null>(null);
+  const liveRef = useRef<DroneLive | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const keys = useRef(new Set<string>());
@@ -65,8 +75,6 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const tk: Tokens = readTokens();
 
     const span = Math.max(0.2, ((parts.chassis?.size[0] ?? 450) + (parts.propulsion?.diameter ?? 10) * 25.4) / 1000);
@@ -102,6 +110,18 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
     let raf = 0;
     let prev = performance.now();
     setBanner(null);
+    setSt({
+      W,
+      H,
+      ceiling: CEILING,
+      buildings,
+      span,
+      motorCount: analysis.type.motorCount,
+      hasGps: !!gps,
+      hasLidar: !!lidar,
+      start: { x: start.x, y: start.y },
+    });
+    liveRef.current = null;
 
     const newWaypoint = (): [number, number] => {
       // waypoint au hasard, à distance raisonnable, pas dans un bâtiment haut
@@ -298,6 +318,16 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
     };
 
     const draw = (s: ReturnType<typeof step>) => {
+      liveRef.current = {
+        me: { ...me },
+        throttle,
+        rays: s.rays,
+        scan: s.scan,
+        waypoint: autoOn ? waypoint : null,
+        crashed: !!crashed,
+      };
+      const canvas = canvasRef.current;
+      if (!canvas || viewRef.current !== "2d") return;
       const { ctx } = setupCanvas(canvas, W, H);
       const px = W / 600;
       ctx.fillStyle = tk.bg;
@@ -478,12 +508,36 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive">{banner}</div>
       )}
 
+      <ViewControls view={view} setView={setView} camera={camera} setCamera={setCamera} />
+
       <div
         ref={wrapRef}
         {...keyHandlers}
-        className="rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        data-scene-root={view === "3d" ? "" : undefined}
+        className={cn("relative overflow-hidden rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring", view === "3d" && "h-[min(70vh,560px)] min-h-[320px]")}
+        onPointerDown={() => wrapRef.current?.focus({ preventScroll: true })}
       >
-        <canvas ref={canvasRef} className="block w-full" />
+        {view === "2d" ? (
+          <canvas ref={canvasRef} className="block w-full" />
+        ) : st ? (
+          <Scene3DBoundary
+            fallback={
+              <SceneMessage>
+                La vue 3D ne fonctionne pas sur cet appareil.{" "}
+                <button type="button" className="ml-1 text-primary underline" onClick={() => setView("2d")}>
+                  Passer en 2D
+                </button>
+              </SceneMessage>
+            }
+          >
+            <Suspense fallback={<SceneMessage>Chargement du monde 3D…</SceneMessage>}>
+              <DroneScene3D st={st} live={liveRef} camera={camera} />
+            </Suspense>
+          </Scene3DBoundary>
+        ) : (
+          <SceneMessage>Chargement du monde 3D…</SceneMessage>
+        )}
+        {view === "3d" && <div className="pointer-events-none absolute bottom-2 left-2 label-tech">{CAMERA_HINT[camera]} · batterie accélérée ×{TIME_SCALE}</div>}
       </div>
 
       <Telemetry items={tele} />
