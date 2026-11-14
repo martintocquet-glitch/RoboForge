@@ -28,3 +28,10 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+
+- Simulation logic stays in the 2D sim components (`src/components/sim/*-sim.tsx`); each step publishes a snapshot into a `live` ref typed in `scene-types.ts`, and the 3D scenes (`src/components/sim3d/`) only read it — keeps one physics source for both views.
+- 3D scenes are loaded with `React.lazy` and rendered only after the sim effect sets its static world, so three.js never runs during SSR; the error boundary lives in `src/components/sim/scene-view.tsx` so the SSR graph never imports three/drei.
+- Do not use drei `<Html>` in the scenes (it unmounts its React root synchronously and logs errors on view switches); draw labels as canvas-texture sprites.
+- Sim components are keyed by robot type in the simulator route so the default scenario follows the stored build after hydration.
