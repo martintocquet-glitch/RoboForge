@@ -449,17 +449,30 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
               target = wp;
               // le robot suit la position que son GPS lui renvoie, pas la position réelle
               const want = Math.atan2(wp[1] - fix.y, wp[0] - fix.x);
-              thr = 1;
-              turn = Math.max(-1, Math.min(1, wrapAngle(want - me.th) * 1.5));
-              if (front < safe) {
-                // reculer en tournant : pivoter sur place devant un mur ne suffit pas à se dégager
-                if (avoidT <= 0) {
-                  turnDir = left > right ? -1 : right > left ? 1 : Math.random() < 0.5 ? -1 : 1;
-                  avoidT = 0.7;
-                }
+              // attraction GPS + répulsion des obstacles (champ de potentiel)
+              const rep = (d: number) => Math.max(0, 1 - d / (safe * 1.8));
+              const push = rep(right) - rep(left); // >0 : obstacle à gauche -> tourner à droite
+              let goalErr = wrapAngle(want - me.th);
+              if (avoidT > 0) {
+                // hystérésis : on termine le contournement avant de rendre la main au GPS
                 avoidT -= dt;
+                if (avoidT > 0.9) {
+                  thr = -0.4;
+                  turn = turnDir;
+                } else {
+                  thr = 0.7;
+                  turn = turnDir * 0.6 + push * 0.6;
+                }
+              } else if (front < safe) {
+                turnDir = left > right ? -1 : right > left ? 1 : Math.sign(goalErr) || 1;
+                avoidT = 1.5;
                 thr = -0.4;
                 turn = turnDir;
+              } else {
+                // le cap visé ne peut pas replonger vers un mur proche
+                goalErr += push * 1.2 + (front < safe * 1.8 ? turnDir * 0.6 : 0);
+                turn = Math.max(-1, Math.min(1, goalErr * 1.5));
+                thr = 1 - 0.5 * Math.max(rep(front), Math.min(1, Math.abs(goalErr) / Math.PI));
               }
               // le cœur du nuage fait reculer ; lisière = ralentir, et on peut traverser
               if (gas > 0.6 && gasCool <= 0) {
