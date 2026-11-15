@@ -9,7 +9,7 @@ import type { ArmLive, ArmObject, ArmStatic, CameraMode, ViewMode } from "./scen
 import { Scene3DBoundary, SceneMessage, ViewControls } from "./scene-view";
 import { readTokens, setupCanvas, withAlpha } from "./sim-utils";
 
-type Tele = { label: string; value: string; tone?: "ok" | "warn" | "bad" }[];
+type Tele = { label: string; value: string; tone?: "ok" | "warn" | "bad" | undefined }[];
 
 const ArmScene3D = lazy(() => import("@/components/sim3d/arm-scene"));
 
@@ -147,10 +147,10 @@ export function ArmSim({ analysis }: { analysis: Analysis }) {
           { label: "Épaule", value: deg(L.q1) },
           { label: "Coude", value: deg(L.q2) },
           { label: "Hauteur pince", value: `${(L.tip.z * 100).toFixed(1)} cm` },
-          { label: "Pince", value: held ? "Objet tenu" : closed ? "Fermée" : "Ouverte", tone: held ? "ok" : undefined },
+          { label: "Pince", value: held ? "Objet tenu" : closed ? "Fermée" : "Ouverte", ...(held ? { tone: "ok" as const } : {}) },
           { label: "Charge utile", value: `${Math.round(payloadG)} g` },
           { label: "Force de serrage", value: force ? `${gripN.toFixed(1)} N` : "Pas de capteur de force", tone: force ? "ok" : "warn" },
-          { label: "Dans le bac", value: `${done} / ${L.objects.length}`, tone: done === L.objects.length ? "ok" : undefined },
+          { label: "Dans le bac", value: `${done} / ${L.objects.length}`, ...(done === L.objects.length ? { tone: "ok" as const } : {}) },
         ]);
       }
       raf = requestAnimationFrame(step);
