@@ -316,6 +316,10 @@ function StatsPanel({ a }: { a: Analysis }) {
           <>
             <Stat label="Vitesse" value={a.speedMs ? `${a.speedMs.toFixed(2)} m/s` : "—"} />
             <Stat label="Marge de couple" value={a.torqueMargin ? `× ${a.torqueMargin.toFixed(1)}` : "—"} tone={a.torqueMargin ? tone(a.torqueMargin, 2, 1) : undefined} />
+            <Stat label="Accélération" value={a.accelMs2 ? `${a.accelMs2.toFixed(1)} m/s²` : "—"} />
+            <Stat label="Adhérence" value={a.grip ? `μ ${a.grip.toFixed(2)}` : "—"} />
+            <Stat label="Force motrice" value={a.driveForceN ? `${Math.round(a.driveForceN)} N` : "—"} />
+            <Stat label="Puissance" value={a.powerW ? `${Math.round(a.powerW)} W` : "—"} />
           </>
         )}
         <Stat label="Autonomie" value={formatDuration(a.autonomyMin)} tone={a.autonomyMin ? tone(a.autonomyMin, sim === "drone" ? 8 : 30, sim === "drone" ? 4 : 10) : undefined} />

@@ -8,3 +8,4 @@
 - [x] Vue 3D du simulateur (robots au sol et drones, 3 caméras, bascule 2D) — testée dans le navigateur
 - [ ] Simulateur bras robotique
 - [x] Page catalogue (recherche, filtres)
+- [x] Physique réaliste au sol : a = F/m, P = F·v, accélération bridée par μ·g, alerte réducteur — testée dans le navigateur

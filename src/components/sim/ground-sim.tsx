@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Sensor } from "@/data/types";
 import { capabilities, driftFor, gasLevel, gpsOffset, loadFactor } from "@/lib/sensor-effects";
+import { G } from "@/lib/physics";
 import type { Analysis } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
@@ -212,7 +213,17 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     const world = makeWorld(scenario, len);
     const vmax = Math.max(0.04, analysis.speedMs);
     const wmax = Math.max(0.8, Math.min(6, (2 * vmax) / wid)) * (parts.propulsion?.kind === "track" ? 0.7 : 1);
-    const accel = vmax * 3 * Math.min(1.5, Math.max(0.4, analysis.torqueMargin / 2));
+    // Physique réelle : F = couple / rayon de roue, a = F / masse, bridée par l'adhérence μ·g.
+    const aGrip = analysis.gripAccelMs2 > 0 ? analysis.gripAccelMs2 : Infinity;
+    const aLegacy = vmax * 3 * Math.min(1.5, Math.max(0.4, analysis.torqueMargin / 2));
+    const vFree = Math.max(0.05, analysis.freeSpeedMs || vmax);
+    const hasDrive = analysis.motorAccelMs2 > 0;
+    // La force d'un moteur à courant continu tombe jusqu'à s'annuler à la vitesse à vide.
+    const accelAt = (v: number) =>
+      Math.max(0.05, Math.min(aGrip, hasDrive ? analysis.motorAccelMs2 * Math.max(0, 1 - Math.abs(v) / vFree) : aLegacy));
+    const accel = Math.min(aGrip, hasDrive ? analysis.accelMs2 : aLegacy);
+    const aCoast = aGrip === Infinity ? accel : aGrip * 0.15; // roue libre : frottements seuls
+    const aBrake = aGrip === Infinity ? accel : aGrip; // freiner ne doit pas faire glisser les roues
     const autoOn = auto && !autoReason;
 
     const capAh = ((parts.battery?.capacity ?? 0) * 0.8) / 1000;
@@ -222,6 +233,9 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     const me: Body = { ...world.start };
     const opp: Body = { x: world.W / 2 + (world.ringR ?? 0) * 0.5, y: world.H / 2, th: Math.PI, v: 0, w: 0, vs: 0 };
     const oppMass = Math.max(100, analysis.massG * 0.9);
+    // Force de poussée max : l'adhérence d'abord, la force motrice des roues ensuite.
+    const pushN = Math.min(analysis.driveForceN > 0 ? analysis.driveForceN : Infinity, (analysis.massG / 1000) * (analysis.gripAccelMs2 || G));
+    const oppPushN = (oppMass / 1000) * (analysis.gripAccelMs2 || G);
     const targets = world.targets.map((t) => ({ ...t }));
     const drift = driftFor(caps.imu.driftDamping);
     let usedAh = 0;
@@ -266,6 +280,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let badHits = 0;
     let target: [number, number] | null = null;
     let accelG = 0; // secousses lues par la centrale inertielle
+    let slip = 0; // part de la force motrice qui part en patinage
     let tilt = 0; // inclinaison due au pivotement
     let prevV = 0;
     const mapCells = new Map<string, [number, number]>();
@@ -560,9 +575,17 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       // sans encodeurs, rien ne corrige : le poids et ce qu'on poussent font chuter la vitesse
       pushing = touching;
       const load = loadFactor(analysis.massG, pushing, caps.encoders);
-      me.v = ramp(me.v, thr * vmax * sag * load, accel * (caps.encoders ? 1 : 0.85));
+      const wantV = thr * vmax * sag * load;
+      // accélérer réclame la force motrice encore disponible ; ralentir reste sous la limite d'adhérence
+      const aFwd = accelAt(me.v) * (caps.encoders ? 1 : 0.85);
+      me.v = ramp(me.v, wantV, Math.abs(wantV) > Math.abs(me.v) ? aFwd : thr === 0 ? aCoast : aBrake);
       me.w = ramp(me.w, turn * wmax, wmax * 4);
-      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accel);
+      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accelAt(me.vs) * (caps.encoders ? 1 : 0.9));
+      // au-delà de μ·g, la force demandée ne passe plus au sol : les roues patinent
+      const demand = hasDrive ? analysis.motorAccelMs2 * Math.max(0, 1 - Math.abs(me.v) / vFree) : 0;
+      const asking = Math.abs(wantV) > Math.abs(me.v) + 0.01 && Math.abs(thr) > 0.05;
+      const lost = asking && demand > aGrip + 0.01 ? 1 - aGrip / demand : 0;
+      slip += (lost - slip) * Math.min(1, dt * 4);
 
       const px = me.x;
       const py = me.y;
@@ -670,9 +693,9 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
             const nx = dx / dd;
             const ny = dy / dd;
             const overlap = rad * 2 - dd;
-            const grip = parts.propulsion?.id === "wheel-silicone-sumo" ? 1.25 : parts.propulsion?.kind === "track" ? 1.15 : 1;
-            const myF = analysis.massG * grip * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(ny, nx) - me.th)) * (Math.abs(me.v) > 0.01 ? Math.min(1, analysis.torqueMargin / 2) : 0.3));
-            const opF = oppMass * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(-ny, -nx) - opp.th)) * (opp.v > 0.01 ? 1 : 0.3));
+            // Bras de fer : la force transmise au sol ne dépasse jamais μ·m·g, ni la force motrice des roues.
+            const myF = pushN * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(ny, nx) - me.th)) * (Math.abs(me.v) > 0.01 ? 1 : 0.3));
+            const opF = oppPushN * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(-ny, -nx) - opp.th)) * (opp.v > 0.01 ? 1 : 0.3));
             const share = myF / (myF + opF);
             me.x -= nx * overlap * (1 - share);
             me.y -= ny * overlap * (1 - share);
@@ -993,6 +1016,11 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         if (caps.imu.level > 0) {
           items.push({ label: "Accélération", value: `${accelG.toFixed(2)} g` });
           items.push({ label: "Inclinaison", value: `${tilt.toFixed(0)}°` });
+        }
+        if (analysis.grip > 0) {
+          items.push({ label: "Adhérence", value: `μ ${analysis.grip.toFixed(2)} · ${analysis.gripAccelMs2.toFixed(1)} m/s²` });
+          if (analysis.motorAccelMs2 > analysis.gripAccelMs2)
+            items.push({ label: "Patinage", value: `${Math.round(slip * 100)} %`, tone: slip > 0.05 ? "warn" : "ok" });
         }
         items.push({ label: "Régulation vitesse", value: caps.encoders ? "encodeurs" : "aucune", tone: caps.encoders ? "ok" : "warn" });
         if (caps.bumper) items.push({ label: "Chocs pare-chocs", value: String(bumps), tone: bumps ? "warn" : "ok" });

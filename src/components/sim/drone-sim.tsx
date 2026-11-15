@@ -89,7 +89,8 @@ export function DroneSim({ analysis }: { analysis: Analysis }) {
     const hoverThr = 1 / tw;
     const maxClimbA = GRAVITY * (tw - 1); // accélération verticale max
     const vmax = Math.max(2, analysis.speedMs); // vitesse horizontale max
-    const tiltA = vmax * 2.5; // accélération horizontale
+    // Accélération horizontale : limitée par l'inclinaison max (a = g·tan θ) et par la poussée disponible.
+    const tiltA = Math.min(GRAVITY * Math.tan(0.7), GRAVITY * (tw - 1));
     const autoOn = auto && !autoReason;
     const caps = capabilities(parts.sensors);
     let fix: { x: number; y: number } | null = null;

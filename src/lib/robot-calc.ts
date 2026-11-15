@@ -1,5 +1,6 @@
 import { getPart } from "@/data/catalog";
 import { getRobotType } from "@/data/robot-types";
+import { driveModel, G, gripOf } from "./physics";
 import type {
   Battery,
   Build,
@@ -43,10 +44,27 @@ export interface Analysis {
   payloadG: number;
   armSpeedDegS: number;
   torqueMargin: number;
+  /** Accélération réellement disponible au départ : min(F/m, μ·g) en m/s². */
+  accelMs2: number;
+  /** Accélération que le moteur demande sans la limite d'adhérence (m/s²). */
+  motorAccelMs2: number;
+  /** Force de traction au blocage des roues (N). */
+  driveForceN: number;
+  /** Puissance mécanique max des moteurs (W). */
+  powerW: number;
+  /** Vitesse à vide au sol (m/s). */
+  freeSpeedMs: number;
+  /** Coefficient d'adhérence pneu/sol. */
+  grip: number;
+  /** Accélération max transmise au sol : μ·g (m/s²). */
+  gripAccelMs2: number;
+  /** Réducteur déjà intégré au moteur, null si aucun n'est indiqué. */
+  reducer: number | null;
+  /** Ratio de réducteur à ajouter, 0 si inutile. */
+  reducerRatio: number;
   canSimulate: boolean;
 }
 
-const G = 9.81;
 const BUCK_MASS = 15;
 const UBEC_MASS = 20;
 
@@ -200,6 +218,16 @@ export function analyzeBuild(build: Build): Analysis {
   let payloadG = 0;
   let armSpeedDegS = 0;
   let torqueMargin = 0;
+  // Adhérence pneu/sol : elle bride l'accélération et la force de poussée.
+  const grip = gripOf(propulsion);
+  const gripAccelMs2 = grip * G;
+  let accelMs2 = 0;
+  let motorAccelMs2 = 0;
+  let driveForceN = 0;
+  let powerW = 0;
+  let freeSpeedMs = 0;
+  let reducerRatio = 0;
+  let reducer: number | null = null;
 
   if (motor && battery) {
     const vRatio = Math.min(1.25, battery.voltage / motor.vNom) - (driver?.id === "l298n" ? 2 / motor.vNom : 0);
@@ -240,6 +268,8 @@ export function analyzeBuild(build: Build): Analysis {
       const need = type.id === "hexapod" ? (massKg * 6) / 3 : massKg * 8 * 0.6;
       torqueMargin = motor.torque / need;
       speedMs = (motor.rpm / 60) * (type.id === "hexapod" ? 0.06 : 0.03) * Math.min(1, torqueMargin / 1.5);
+      // Une patte ne pousse pas plus fort que l'adhérence de son appui.
+      accelMs2 = Math.min(speedMs * 3 * Math.min(1.5, Math.max(0.4, torqueMargin / 2)), gripAccelMs2 || Infinity);
       avgCurrentA += count * motor.currentA * 0.6;
       peakCurrentA += count * motor.stallA * 0.5;
       if (torqueMargin < 1) err(`Servos trop faibles : chaque articulation doit fournir ${need.toFixed(1)} kg·cm, ${motor.name} en donne ${motor.torque}. Le robot s'effondre.`);
@@ -252,11 +282,46 @@ export function analyzeBuild(build: Build): Analysis {
       const need = (massKg * (diam / 20) * coef) / count;
       torqueMargin = need > 0 ? motor.torque / need : 0;
       speedMs = groundSpeedMs(effRpm, diam, eff) * (torqueMargin < 1 ? 0 : Math.min(1, 0.6 + torqueMargin * 0.2));
+      // Force motrice réelle : couple à la roue / rayon, ponte par la tension batterie,
+      // puis accélération F/m bridée par l'adhérence μ·g.
+      const drive = driveModel({ motor, count, propulsion, massG, vScale: vRatio });
+      if (drive) {
+        accelMs2 = drive.accel;
+        motorAccelMs2 = drive.motorAccel;
+        driveForceN = drive.stallForceN;
+        powerW = drive.powerW;
+        freeSpeedMs = drive.freeSpeed;
+        reducerRatio = drive.reducerRatio;
+        reducer = drive.reducer;
+        if (drive.gripLimited) {
+          info(
+            `Adhérence : le sol ne peut transmettre que ${drive.gripAccel.toFixed(1)} m/s² (μ = ${drive.grip}). ` +
+              `Le moteur en demande ${drive.motorAccel.toFixed(1)} : ${Math.round(drive.spinLoss * 100)} % de la force part en patinage.`,
+          );
+        }
+        if (drive.reducerRatio > 0) {
+          const kmh = Math.round(drive.freeSpeed * 3.6);
+          warn(
+            drive.reducer === null
+              ? `Moteur rapide monté sans réducteur : ${drive.freeSpeed.toFixed(1)} m/s (${kmh} km/h) en sortie moteur. ` +
+                  `Ajoutez un réducteur ${drive.reducerRatio}:1 : vitesse ramenée à ${(drive.freeSpeed / drive.reducerRatio).toFixed(1)} m/s et couple multiplié par ${drive.reducerRatio}.`
+              : `Réducteur ${drive.reducer}:1 insuffisant : il reste ${drive.freeSpeed.toFixed(1)} m/s (${kmh} km/h). ` +
+                  `Ajoutez ${drive.reducerRatio}:1 de plus (total ${Math.round(drive.reducer * drive.reducerRatio)}:1) pour rester pilotable.`,
+          );
+        }
+        const battW = battery.voltage * battery.maxA;
+        if (battW < drive.powerW) {
+          warn(
+            `Puissance : les moteurs peuvent demander ${Math.round(drive.powerW)} W (P = τ·ω), ` +
+              `${battery.name} n'en fournit que ${Math.round(battW)} W (${battery.voltage} V × ${battery.maxA} A) : la vitesse max ne sera pas atteinte.`,
+          );
+        }
+      }
       avgCurrentA += count * motor.currentA * 0.6;
       peakCurrentA += count * motor.stallA;
       if (torqueMargin < 1) err(`Couple insuffisant : ${need.toFixed(2)} kg·cm requis par moteur, ${motor.name} donne ${motor.torque}. Le robot ne bouge pas.`);
       else if (torqueMargin < 2) warn(`Marge de couple faible (×${torqueMargin.toFixed(1)}) : accélérations molles.`);
-      if (speedMs > 4) warn(`Vitesse de ${speedMs.toFixed(1)} m/s : difficile à contrôler en intérieur.`);
+      if (speedMs > 4 && reducerRatio === 0) warn(`Vitesse de ${speedMs.toFixed(1)} m/s : difficile à contrôler en intérieur.`);
     }
   }
 
@@ -285,6 +350,15 @@ export function analyzeBuild(build: Build): Analysis {
     payloadG,
     armSpeedDegS,
     torqueMargin,
+    accelMs2,
+    motorAccelMs2,
+    driveForceN,
+    powerW,
+    freeSpeedMs,
+    grip,
+    gripAccelMs2,
+    reducer,
+    reducerRatio,
     canSimulate: !issues.some((i) => i.level === "error"),
   };
 }
