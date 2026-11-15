@@ -35,3 +35,4 @@ use the editor.
 - 3D scenes are loaded with `React.lazy` and rendered only after the sim effect sets its static world, so three.js never runs during SSR; the error boundary lives in `src/components/sim/scene-view.tsx` so the SSR graph never imports three/drei.
 - Do not use drei `<Html>` in the scenes (it unmounts its React root synchronously and logs errors on view switches); draw labels as canvas-texture sprites.
 - Sim components are keyed by robot type in the simulator route so the default scenario follows the stored build after hydration.
+- Traction physics (motor force, acceleration, adhesion cap, reducer advice) lives in `src/lib/physics.ts` and reaches the sim and the atelier only through `analyzeBuild` — one physics source for the 2D view, the 3D view and the spec sheet; catalog `torque`/`rpm` are already gearbox-output values, so never multiply them by the built-in ratio.
