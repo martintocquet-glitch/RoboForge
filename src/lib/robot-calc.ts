@@ -1,7 +1,7 @@
 import { getPart } from "@/data/catalog";
 import { getRobotType } from "@/data/robot-types";
 import { channelsNeeded, electricalResources, evaluateCompatibility } from "./compatibility";
-import { driveModel, G, gripOf } from "./physics";
+import { DESIGN_ACCEL, DESIGN_SLOPE_DEG, driveModel, G, gripOf, torqueNeed } from "./physics";
 import type {
   Battery,
   Build,
@@ -47,6 +47,12 @@ export interface Analysis {
   payloadG: number;
   armSpeedDegS: number;
   torqueMargin: number;
+  /** Couple requis par moteur au cas de dimensionnement (kg·cm), 0 hors engins à roues. */
+  torqueNeedKgcm: number;
+  /** Couple par moteur pour rouler sur le plat (kg·cm). */
+  rollTorqueKgcm: number;
+  /** Pente maximale franchissable (°). */
+  maxSlopeDeg: number;
   /** Accélération réellement disponible au départ : min(F/m, μ·g) en m/s². */
   accelMs2: number;
   /** Accélération que le moteur demande sans la limite d'adhérence (m/s²). */
@@ -173,6 +179,9 @@ export function analyzeBuild(build: Build): Analysis {
   let payloadG = 0;
   let armSpeedDegS = 0;
   let torqueMargin = 0;
+  let torqueNeedKgcm = 0;
+  let rollTorqueKgcm = 0;
+  let maxSlopeDeg = 0;
   // Adhérence pneu/sol : elle bride l'accélération et la force de poussée.
   const grip = gripOf(propulsion);
   const gripAccelMs2 = grip * G;
@@ -229,12 +238,31 @@ export function analyzeBuild(build: Build): Analysis {
       else if (torqueMargin < 1.5) warn(`Servos à la limite (marge ×${torqueMargin.toFixed(2)}) : marche lente.`);
     } else {
       const diam = propulsion?.diameter ?? 65;
-      const eff = propulsion?.kind === "track" ? 0.8 : propulsion?.kind === "mecanum" ? 0.9 : 1;
-      const massKg = massG / 1000;
-      const coef = propulsion?.kind === "track" ? 0.4 : 0.25;
-      const need = (massKg * (diam / 20) * coef) / count;
-      torqueMargin = need > 0 ? motor.torque / need : 0;
-      speedMs = groundSpeedMs(effRpm, diam, eff) * (torqueMargin < 1 ? 0 : Math.min(1, 0.6 + torqueMargin * 0.2));
+      // Glissement des chenilles et des galets mecanum sur la vitesse au sol.
+      const slip = propulsion?.kind === "track" ? 0.8 : propulsion?.kind === "mecanum" ? 0.9 : 1;
+      const tScale = motor.kind === "dc" ? Math.max(0, vRatio) : 1;
+      const tq = propulsion ? torqueNeed({ motor, count, propulsion, massG, vScale: tScale }) : null;
+      if (tq) {
+        torqueMargin = tq.margin;
+        torqueNeedKgcm = tq.needKgcm;
+        rollTorqueKgcm = tq.rollKgcm;
+        maxSlopeDeg = tq.maxSlopeDeg;
+        speedMs = tq.stalledOnFlat ? 0 : groundSpeedMs(effRpm, diam, slip) * tq.cruiseFactor;
+        if (tq.stalledOnFlat) {
+          err(
+            `Couple insuffisant : rouler sur le plat demande ${tq.rollKgcm.toFixed(2)} kg·cm par moteur ` +
+              `(résistance au roulement), ${motor.name} n'en donne que ${tq.availKgcm.toFixed(1)}. Le robot ne bouge pas.`,
+          );
+        } else if (tq.margin < 1) {
+          warn(
+            `Couple limite : ${tq.needKgcm.toFixed(2)} kg·cm requis par moteur pour une rampe de ${DESIGN_SLOPE_DEG}° à ${DESIGN_ACCEL} m/s² ` +
+              `(roulement ${tq.rollKgcm.toFixed(2)} + pente ${tq.slopeKgcm.toFixed(2)} + accélération ${tq.accelKgcm.toFixed(2)}), ` +
+              `${motor.name} donne ${tq.availKgcm.toFixed(1)}. Pente max ${tq.maxSlopeDeg.toFixed(0)}°.`,
+          );
+        } else if (tq.margin < 2) {
+          warn(`Marge de couple faible (×${tq.margin.toFixed(1)}) : le moteur travaille près du blocage en montée, il chauffe et tire beaucoup de courant.`);
+        }
+      }
       // Force motrice réelle : couple à la roue / rayon, ponte par la tension batterie,
       // puis accélération F/m bridée par l'adhérence μ·g.
       const drive = driveModel({ motor, count, propulsion, massG, vScale: vRatio });
@@ -272,8 +300,6 @@ export function analyzeBuild(build: Build): Analysis {
       }
       avgCurrentA += count * motor.currentA * 0.6;
       peakCurrentA += count * motor.stallA;
-      if (torqueMargin < 1) err(`Couple insuffisant : ${need.toFixed(2)} kg·cm requis par moteur, ${motor.name} donne ${motor.torque}. Le robot ne bouge pas.`);
-      else if (torqueMargin < 2) warn(`Marge de couple faible (×${torqueMargin.toFixed(1)}) : accélérations molles.`);
       if (speedMs > 4 && reducerRatio === 0) warn(`Vitesse de ${speedMs.toFixed(1)} m/s : difficile à contrôler en intérieur.`);
     }
   }
@@ -297,6 +323,9 @@ export function analyzeBuild(build: Build): Analysis {
     payloadG,
     armSpeedDegS,
     torqueMargin,
+    torqueNeedKgcm,
+    rollTorqueKgcm,
+    maxSlopeDeg,
     accelMs2,
     motorAccelMs2,
     driveForceN,
