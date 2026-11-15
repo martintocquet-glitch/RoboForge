@@ -6,16 +6,16 @@ import { cn } from "@/lib/utils";
 export function PartCard({
   part,
   selected,
-  dimmed,
   note,
+  compatibilityStatus,
   noteLevel = "warning",
   action,
   compact,
 }: {
   part: Part;
   selected?: boolean | undefined;
-  dimmed?: boolean | undefined;
   note?: string | undefined;
+  compatibilityStatus?: "compatible" | "warning" | "incompatible" | undefined;
   noteLevel?: "warning" | "error";
   action?: ReactNode;
   compact?: boolean | undefined;
@@ -27,14 +27,25 @@ export function PartCard({
       className={cn(
         "flex h-full flex-col rounded-md border bg-card p-4 transition-colors",
         selected ? "border-primary shadow-glow" : "border-border",
-        dimmed && "opacity-55",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="label-tech truncate">
-            {part.brand}
-            {kind ? ` · ${kind}` : ""}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="label-tech truncate">
+              {part.brand}
+              {kind ? ` · ${kind}` : ""}
+            </div>
+            {compatibilityStatus === "incompatible" && (
+              <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive">
+                Incompatible
+              </span>
+            )}
+            {compatibilityStatus === "warning" && (
+              <span className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-warning">
+                À vérifier
+              </span>
+            )}
           </div>
           <h3 className="mt-0.5 font-display text-base font-semibold leading-snug">{part.name}</h3>
         </div>
