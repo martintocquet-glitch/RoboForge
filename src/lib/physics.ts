@@ -146,6 +146,105 @@ export function driveModel(o: {
 }
 
 /**
+ * Résistance au roulement Crr (F = Crr · m · g) : déformation du pneu, friction
+ * des roulements et, pour les chenilles et mecanum, frottement interne des
+ * maillons ou des galets.
+ */
+export const ROLLING_RESISTANCE: Record<PropulsionKind, number> = {
+  wheel: 0.03,
+  track: 0.1,
+  mecanum: 0.06,
+  leg: 0,
+  propeller: 0,
+  gripper: 0,
+};
+
+/** Cas de dimensionnement : rampe de 10° franchie en accélérant à 0,5 m/s². */
+export const DESIGN_SLOPE_DEG = 10;
+export const DESIGN_ACCEL = 0.5;
+
+export interface TorqueNeed {
+  /** Couple par moteur pour vaincre le roulement sur le plat (kg·cm). */
+  rollKgcm: number;
+  /** Couple par moteur pour gravir la rampe de dimensionnement (kg·cm). */
+  slopeKgcm: number;
+  /** Couple par moteur pour accélérer à DESIGN_ACCEL (kg·cm). */
+  accelKgcm: number;
+  /** Couple total requis par moteur, en sortie moteur (kg·cm). */
+  needKgcm: number;
+  /** Couple de blocage disponible par moteur à la tension réelle (kg·cm). */
+  availKgcm: number;
+  /** Couple au-delà duquel la roue patine, par moteur (kg·cm). */
+  gripKgcm: number;
+  /** Disponible / requis. */
+  margin: number;
+  /** Vrai si le moteur ne vainc même pas le roulement sur le plat. */
+  stalledOnFlat: boolean;
+  /** Fraction de la vitesse à vide atteinte en croisière sur le plat. */
+  cruiseFactor: number;
+  /** Pente maximale franchissable, limitée par le couple puis l'adhérence (°). */
+  maxSlopeDeg: number;
+}
+
+/**
+ * Couple requis à la roue :
+ *   F = m·g·(Crr·cos θ + sin θ) + m·a
+ *   τ_moteur = F · r / (n · η)
+ * Le moteur à courant continu suit τ(ω) = τ_blocage · (1 − ω/ω₀), donc la vitesse
+ * de croisière est atteinte quand τ(ω) égale le couple de roulement.
+ */
+export function torqueNeed(o: {
+  motor: Motor;
+  count: number;
+  propulsion: Propulsion;
+  massG: number;
+  vScale?: number;
+}): TorqueNeed | null {
+  const { motor, propulsion } = o;
+  const kind = propulsion.kind;
+  if (kind === "leg" || kind === "gripper" || kind === "propeller") return null;
+  const count = Math.max(1, o.count);
+  const massKg = Math.max(0, o.massG) / 1000;
+  if (massKg <= 0) return null;
+  const vScale = Math.max(0, Math.min(1.25, o.vScale ?? 1));
+  const r = Math.max(0.005, propulsion.diameter / 2000);
+  const eta = TRANS_EFF[kind] ?? 0.9;
+  const crr = ROLLING_RESISTANCE[kind] ?? 0.03;
+  const th = (DESIGN_SLOPE_DEG * Math.PI) / 180;
+  const W = massKg * G;
+  const toKgcm = (forceN: number) => (forceN * r) / (count * eta) / KGCM_TO_NM;
+
+  const rollKgcm = toKgcm(W * crr);
+  const slopeKgcm = toKgcm(W * (crr * Math.cos(th) + Math.sin(th))) - rollKgcm;
+  const accelKgcm = toKgcm(massKg * DESIGN_ACCEL);
+  const needKgcm = rollKgcm + slopeKgcm + accelKgcm;
+  const availKgcm = motor.torque * vScale;
+  const grip = gripOf(propulsion);
+  const gripKgcm = toKgcm(W * grip);
+
+  // Pente max : sin θ + Crr·cos θ = F_dispo / (m·g), puis tan θ ≤ μ.
+  const usable = Math.min(availKgcm, gripKgcm);
+  const x = (usable * KGCM_TO_NM * count * eta) / r / W;
+  const phi = Math.atan(crr);
+  const s = x / Math.sqrt(1 + crr * crr);
+  const torqueSlope = s >= 1 ? Math.PI / 2 - phi : Math.max(0, Math.asin(Math.max(0, s)) - phi);
+  const maxSlopeDeg = (Math.min(torqueSlope, Math.atan(grip)) * 180) / Math.PI;
+
+  return {
+    rollKgcm,
+    slopeKgcm,
+    accelKgcm,
+    needKgcm,
+    availKgcm,
+    gripKgcm,
+    margin: needKgcm > 0 ? availKgcm / needKgcm : 0,
+    stalledOnFlat: availKgcm <= rollKgcm,
+    cruiseFactor: availKgcm > 0 ? Math.max(0, 1 - rollKgcm / availKgcm) : 0,
+    maxSlopeDeg,
+  };
+}
+
+/**
  * Accélération disponible à une vitesse donnée : la force du moteur décroît
  * jusqu'à s'annuler à la vitesse à vide, et ne dépasse jamais μ·g.
  */

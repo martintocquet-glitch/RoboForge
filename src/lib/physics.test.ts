@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getPart } from "@/data/catalog";
 import { PRESETS } from "@/data/presets";
 import type { Motor, Propulsion } from "@/data/types";
-import { builtInReducer, driveModel, G, gripOf, KGCM_TO_NM, tractionAccel } from "./physics";
+import { builtInReducer, driveModel, G, gripOf, KGCM_TO_NM, torqueNeed, tractionAccel } from "./physics";
 import { analyzeBuild } from "./robot-calc";
 
 const motor = (id: string) => getPart<Motor>(id)!;
@@ -116,5 +116,36 @@ describe("atelier", () => {
     expect(a.reducerRatio).toBe(0);
     expect(a.accelMs2).toBeGreaterThan(0);
     expect(a.issues.some((i) => i.msg.includes("réducteur"))).toBe(false);
+  });
+});
+
+describe("modèle de couple requis", () => {
+  it("additionne roulement, pente et accélération : τ = F·r / (n·η)", () => {
+    const t = torqueNeed({ motor: motor("tt-gear"), count: 2, propulsion: wheel("wheel-tt-65"), massG: 600 })!;
+    const r = 0.0325;
+    const W = 0.6 * G;
+    const k = r / (2 * 0.9) / KGCM_TO_NM;
+    expect(t.rollKgcm).toBeCloseTo(W * 0.03 * k, 4);
+    expect(t.accelKgcm).toBeCloseTo(0.6 * 0.5 * k, 4);
+    const th = (10 * Math.PI) / 180;
+    expect(t.needKgcm).toBeCloseTo((W * (0.03 * Math.cos(th) + Math.sin(th)) + 0.6 * 0.5) * k, 4);
+    expect(t.margin).toBeCloseTo(t.availKgcm / t.needKgcm, 6);
+  });
+
+  it("demande plus de couple aux chenilles qu'aux roues", () => {
+    const w = torqueNeed({ motor: motor("tt-gear"), count: 2, propulsion: { ...wheel("wheel-tt-65") }, massG: 800 })!;
+    const t = torqueNeed({ motor: motor("tt-gear"), count: 2, propulsion: { ...wheel("wheel-tt-65"), kind: "track" }, massG: 800 })!;
+    expect(t.rollKgcm).toBeGreaterThan(w.rollKgcm * 3);
+  });
+
+  it("bride la pente max par l'adhérence", () => {
+    const t = torqueNeed({ motor: motor("cim"), count: 4, propulsion: wheel("wheel-130"), massG: 3000 })!;
+    expect(t.maxSlopeDeg).toBeCloseTo((Math.atan(0.75) * 180) / Math.PI, 3);
+  });
+
+  it("détecte un moteur bloqué sur le plat", () => {
+    const t = torqueNeed({ motor: motor("tt-gear"), count: 2, propulsion: wheel("wheel-130"), massG: 40000 })!;
+    expect(t.stalledOnFlat).toBe(true);
+    expect(t.cruiseFactor).toBe(0);
   });
 });
