@@ -583,7 +583,8 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accelAt(me.vs) * (caps.encoders ? 1 : 0.9));
       // au-delà de μ·g, la force demandée ne passe plus au sol : les roues patinent
       const demand = hasDrive ? analysis.motorAccelMs2 * Math.max(0, 1 - Math.abs(me.v) / vFree) : 0;
-      const lost = demand > aGrip + 0.01 && Math.abs(thr) > 0.05 ? 1 - aGrip / demand : 0;
+      const asking = Math.abs(wantV) > Math.abs(me.v) + 0.01 && Math.abs(thr) > 0.05;
+      const lost = asking && demand > aGrip + 0.01 ? 1 - aGrip / demand : 0;
       slip += (lost - slip) * Math.min(1, dt * 4);
 
       const px = me.x;
