@@ -88,3 +88,35 @@ export interface DroneLive {
   /** Position renvoyée par le GPS (null = pas de GPS). */
   fix: { x: number; y: number } | null;
 }
+
+export interface ArmObject {
+  id: number;
+  x: number;
+  y: number;
+  z: number; // m : bas de l'objet
+  size: number;
+  massG: number;
+  held: boolean;
+  done: boolean;
+}
+
+export interface ArmStatic {
+  W: number;
+  H: number;
+  base: { x: number; y: number };
+  baseH: number;
+  L1: number;
+  L2: number;
+  tool: number;
+  bin: { x: number; y: number; w: number; h: number; depth: number };
+  suction: boolean;
+}
+
+export interface ArmLive {
+  q0: number;
+  q1: number;
+  q2: number;
+  grip: number; // 0 ouvert … 1 fermé
+  tip: { x: number; y: number; z: number };
+  objects: ArmObject[];
+}
