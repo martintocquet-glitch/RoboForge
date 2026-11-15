@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Sensor } from "@/data/types";
 import { capabilities, driftFor, gasLevel, gpsOffset, loadFactor } from "@/lib/sensor-effects";
+import { G } from "@/lib/physics";
 import type { Analysis } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
 import { batteryTone, DrivePad, Telemetry, useKeyHandlers } from "./sim-controls";
@@ -212,7 +213,17 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     const world = makeWorld(scenario, len);
     const vmax = Math.max(0.04, analysis.speedMs);
     const wmax = Math.max(0.8, Math.min(6, (2 * vmax) / wid)) * (parts.propulsion?.kind === "track" ? 0.7 : 1);
-    const accel = vmax * 3 * Math.min(1.5, Math.max(0.4, analysis.torqueMargin / 2));
+    // Physique réelle : F = couple / rayon de roue, a = F / masse, bridée par l'adhérence μ·g.
+    const aGrip = analysis.gripAccelMs2 > 0 ? analysis.gripAccelMs2 : Infinity;
+    const aLegacy = vmax * 3 * Math.min(1.5, Math.max(0.4, analysis.torqueMargin / 2));
+    const vFree = Math.max(0.05, analysis.freeSpeedMs || vmax);
+    const hasDrive = analysis.motorAccelMs2 > 0;
+    // La force d'un moteur à courant continu tombe jusqu'à s'annuler à la vitesse à vide.
+    const accelAt = (v: number) =>
+      Math.max(0.05, Math.min(aGrip, hasDrive ? analysis.motorAccelMs2 * Math.max(0, 1 - Math.abs(v) / vFree) : aLegacy));
+    const accel = Math.min(aGrip, hasDrive ? analysis.accelMs2 : aLegacy);
+    const aCoast = aGrip === Infinity ? accel : aGrip * 0.15; // roue libre : frottements seuls
+    const aBrake = aGrip === Infinity ? accel : aGrip; // freiner ne doit pas faire glisser les roues
     const autoOn = auto && !autoReason;
 
     const capAh = ((parts.battery?.capacity ?? 0) * 0.8) / 1000;
@@ -222,6 +233,9 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     const me: Body = { ...world.start };
     const opp: Body = { x: world.W / 2 + (world.ringR ?? 0) * 0.5, y: world.H / 2, th: Math.PI, v: 0, w: 0, vs: 0 };
     const oppMass = Math.max(100, analysis.massG * 0.9);
+    // Force de poussée max : l'adhérence d'abord, la force motrice des roues ensuite.
+    const pushN = Math.min(analysis.driveForceN > 0 ? analysis.driveForceN : Infinity, (analysis.massG / 1000) * (analysis.gripAccelMs2 || G));
+    const oppPushN = (oppMass / 1000) * (analysis.gripAccelMs2 || G);
     const targets = world.targets.map((t) => ({ ...t }));
     const drift = driftFor(caps.imu.driftDamping);
     let usedAh = 0;
@@ -266,6 +280,7 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let badHits = 0;
     let target: [number, number] | null = null;
     let accelG = 0; // secousses lues par la centrale inertielle
+    let slip = 0; // part de la force motrice qui part en patinage
     let tilt = 0; // inclinaison due au pivotement
     let prevV = 0;
     const mapCells = new Map<string, [number, number]>();
