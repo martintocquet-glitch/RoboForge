@@ -1,5 +1,6 @@
 import { getPart } from "@/data/catalog";
 import { getRobotType } from "@/data/robot-types";
+import { driveModel, G, gripOf } from "./physics";
 import type {
   Battery,
   Build,
@@ -43,10 +44,27 @@ export interface Analysis {
   payloadG: number;
   armSpeedDegS: number;
   torqueMargin: number;
+  /** Accélération réellement disponible au départ : min(F/m, μ·g) en m/s². */
+  accelMs2: number;
+  /** Accélération que le moteur demande sans la limite d'adhérence (m/s²). */
+  motorAccelMs2: number;
+  /** Force de traction au blocage des roues (N). */
+  driveForceN: number;
+  /** Puissance mécanique max des moteurs (W). */
+  powerW: number;
+  /** Vitesse à vide au sol (m/s). */
+  freeSpeedMs: number;
+  /** Coefficient d'adhérence pneu/sol. */
+  grip: number;
+  /** Accélération max transmise au sol : μ·g (m/s²). */
+  gripAccelMs2: number;
+  /** Réducteur déjà intégré au moteur, null si aucun n'est indiqué. */
+  reducer: number | null;
+  /** Ratio de réducteur à ajouter, 0 si inutile. */
+  reducerRatio: number;
   canSimulate: boolean;
 }
 
-const G = 9.81;
 const BUCK_MASS = 15;
 const UBEC_MASS = 20;
 
@@ -200,6 +218,16 @@ export function analyzeBuild(build: Build): Analysis {
   let payloadG = 0;
   let armSpeedDegS = 0;
   let torqueMargin = 0;
+  // Adhérence pneu/sol : elle bride l'accélération et la force de poussée.
+  const grip = gripOf(propulsion);
+  const gripAccelMs2 = grip * G;
+  let accelMs2 = 0;
+  let motorAccelMs2 = 0;
+  let driveForceN = 0;
+  let powerW = 0;
+  let freeSpeedMs = 0;
+  let reducerRatio = 0;
+  let reducer: number | null = null;
 
   if (motor && battery) {
     const vRatio = Math.min(1.25, battery.voltage / motor.vNom) - (driver?.id === "l298n" ? 2 / motor.vNom : 0);
