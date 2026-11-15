@@ -1,5 +1,6 @@
 import { getPart } from "@/data/catalog";
 import { getRobotType } from "@/data/robot-types";
+import { channelsNeeded, electricalResources, evaluateCompatibility } from "./compatibility";
 import { driveModel, G, gripOf } from "./physics";
 import type {
   Battery,
@@ -18,6 +19,8 @@ export interface Issue {
   level: IssueLevel;
   msg: string;
 }
+
+export { channelsNeeded, motorsPerDriverChannel } from "./compatibility";
 
 export interface Analysis {
   type: RobotType;
@@ -68,18 +71,6 @@ export interface Analysis {
 const BUCK_MASS = 15;
 const UBEC_MASS = 20;
 
-export function motorsPerDriverChannel(type: RobotType): number {
-  // Les rovers 4 roues et chenilles câblent les moteurs d'un même côté en parallèle.
-  if (type.id === "rover4wd") return 2;
-  return 1;
-}
-
-export function channelsNeeded(type: RobotType, motor: Motor, count: number): number {
-  if (motor.kind === "smart-servo") return 1;
-  if (motor.kind === "dc" && type.id === "rover4wd") return 2;
-  return count;
-}
-
 export function groundSpeedMs(rpm: number, wheelDiameterMm: number, efficiency = 1): number {
   return ((rpm * Math.PI * wheelDiameterMm) / 60000) * efficiency;
 }
@@ -109,16 +100,18 @@ export function analyzeBuild(build: Build): Analysis {
   const err = (msg: string) => issues.push({ level: "error", msg });
   const warn = (msg: string) => issues.push({ level: "warning", msg });
   const info = (msg: string) => issues.push({ level: "info", msg });
+  for (const issue of evaluateCompatibility(build)) {
+    if (issue.code === "driver-required") continue;
+    if (issue.level === "error") err(issue.message);
+    else if (issue.level === "warning") warn(issue.message);
+    else info(issue.message);
+  }
 
   if (!chassis) err("Choisissez un châssis.");
   if (!controller) err("Choisissez une carte mère.");
   if (!motor) err("Choisissez un moteur.");
   if (!battery) err("Choisissez une batterie.");
   if (!propulsion) err(type.sim === "drone" ? "Choisissez des hélices." : type.sim === "arm" ? "Choisissez un effecteur (pince)." : type.propulsionKinds.includes("leg") ? "Choisissez des segments de pattes." : "Choisissez des roues ou chenilles.");
-
-  if (chassis && !chassis.fits.includes(type.id)) err(`Le châssis ${chassis.name} n'est pas prévu pour un ${type.name.toLowerCase()}.`);
-  if (motor && !type.motorKinds.includes(motor.kind)) err(`Un moteur de type « ${motor.kind} » ne convient pas à un ${type.name.toLowerCase()}.`);
-  if (propulsion && !type.propulsionKinds.includes(propulsion.kind)) err(`${propulsion.name} ne convient pas à ce type de robot.`);
 
   // ----- Driver -----
   let driverQty = 0;
@@ -133,65 +126,29 @@ export function analyzeBuild(build: Build): Analysis {
       err(motor.kind === "brushless" ? "Ajoutez un ESC pour piloter les moteurs brushless." : motor.kind === "smart-servo" ? "Ajoutez une interface Dynamixel (U2D2) ou une carte OpenCR." : "Ajoutez un driver moteur : une carte ne peut pas alimenter un moteur directement.");
     }
     if (driver) {
-      if (!driver.supports.includes(motor.kind)) {
-        err(`${driver.name} ne pilote pas ce type de moteur (${motor.kind}).`);
-      } else {
+      if (driver.supports.includes(motor.kind)) {
         const needed = channelsNeeded(type, motor, count);
         driverQty = Math.ceil(needed / driver.channels);
         if (driverQty > 1) info(`${driverQty} × ${driver.name} nécessaires pour ${needed} canaux.`);
-        const perChannel = motor.currentA * (motor.kind === "smart-servo" ? count * 0.5 : motorsPerDriverChannel(type));
-        const stallPerChannel = motor.stallA * (motor.kind === "smart-servo" ? count * 0.3 : motorsPerDriverChannel(type));
-        if (motor.kind === "servo") {
-          // Les servos sont alimentés par le rail de puissance, le PCA9685 ne fournit que le signal.
-        } else if (perChannel > driver.currentA) err(`Driver surchargé : ${perChannel.toFixed(1)} A par canal pour ${driver.currentA} A max.`);
-        else if (stallPerChannel > driver.currentA * 1.5) warn(`Au blocage, les moteurs tirent ${stallPerChannel.toFixed(1)} A : le driver risque de chauffer.`);
       }
     }
   }
 
-  // ----- Tensions -----
+  // ----- Régulateurs requis -----
   if (battery && motor) {
-    const v = battery.voltage;
-    const [lo, hi] = motor.vRange;
-    if (motor.kind === "servo" && v > hi) {
+    if (motor.kind === "servo" && battery.voltage > motor.vRange[1]) {
       extraMass += UBEC_MASS;
       info(`Un régulateur UBEC ${motor.vNom} V est ajouté pour les servos.`);
-    } else if (v > hi * 1.25) err(`Batterie ${v} V trop forte pour ${motor.name} (${hi} V max) : le moteur va griller.`);
-    else if (v > hi) warn(`Batterie ${v} V légèrement au-dessus du maximum moteur (${hi} V).`);
-    else if (v < lo * 0.85) err(`Batterie ${v} V trop faible pour ${motor.name} (${lo} V min).`);
-    else if (v < lo) warn(`Batterie ${v} V un peu faible pour ${motor.name}.`);
-  }
-  if (battery && driver && !driver.supports.includes("servo")) {
-    if (battery.voltage > driver.vRange[1]) err(`${driver.name} accepte ${driver.vRange[1]} V max (batterie ${battery.voltage} V).`);
-    else if (battery.voltage < driver.vRange[0]) warn(`${driver.name} demande au moins ${driver.vRange[0]} V.`);
+    }
   }
   if (battery && controller) {
     if (battery.voltage > controller.vin[1]) {
       extraMass += BUCK_MASS;
-      info(`Un convertisseur abaisseur est ajouté pour alimenter ${controller.name}.`);
-    } else if (battery.voltage < controller.vin[0]) err(`${controller.name} demande au moins ${controller.vin[0]} V (batterie ${battery.voltage} V).`);
+    }
   }
 
-  // ----- Capteurs & broches -----
-  let pinsUsed = 0;
-  let i2c = false;
-  for (const s of sensors) {
-    if (s.iface === "I2C") i2c = true;
-    else pinsUsed += s.pins;
-    if ((s.iface === "USB" || s.iface === "CSI" || s.needsVision) && controller && !controller.canRunVision) {
-      err(`${s.name} demande une carte Linux (Raspberry Pi, Jetson…), pas ${controller.name}.`);
-    }
-    if (controller && (s.iface === "GPIO" || s.iface === "Analog") && (controller.logicV < s.vRange[0] || controller.logicV > s.vRange[1])) {
-      warn(`${s.name} fonctionne en ${s.vRange[0]}–${s.vRange[1]} V : ajoutez un convertisseur de niveau (${controller.logicV} V).`);
-    }
-  }
-  if (driver && driverQty > 0 && motor) {
-    if (driver.iface === "I2C") i2c = true;
-    else pinsUsed += Math.min(channelsNeeded(type, motor, count), driver.channels * driverQty) * Math.max(1, driver.pinsPerChannel);
-  } else if (servoDirect) pinsUsed += count;
-  if (i2c) pinsUsed += 2;
-  const pinsAvailable = controller?.gpio ?? 0;
-  if (controller && pinsUsed > pinsAvailable) err(`Pas assez de broches : ${pinsUsed} utilisées pour ${pinsAvailable} disponibles.`);
+  // ----- Broches -----
+  const { pinsUsed, pinsAvailable } = electricalResources(build);
 
   // ----- Masse & prix -----
   const propCount = propulsion?.perMotor ? count : 1;
@@ -206,8 +163,6 @@ export function analyzeBuild(build: Build): Analysis {
   }
   massG += extraMass;
   massG = Math.round(massG * 1.05); // câbles, visserie
-
-  if (chassis && sensors.length > chassis.payloadSlots) warn(`Châssis chargé : ${sensors.length} capteurs pour ${chassis.payloadSlots} emplacements.`);
 
   // ----- Courants -----
   const electronicsA = ((controller?.currentmA ?? 0) + sensors.reduce((a, s) => a + s.currentmA, 0)) / 1000;
@@ -237,10 +192,8 @@ export function analyzeBuild(build: Build): Analysis {
       let propFactor = 1;
       if (propulsion && motor.propIn) {
         const diff = propulsion.diameter - motor.propIn;
-        if (diff > 1.5) err(`Hélices ${propulsion.diameter}" trop grandes pour ${motor.name} (${motor.propIn}" conseillé) : surchauffe moteur.`);
-        else if (diff < -1.5) {
+        if (diff < -1.5) {
           propFactor = 0.6;
-          warn(`Hélices ${propulsion.diameter}" trop petites (${motor.propIn}" conseillé) : poussée réduite.`);
         }
       }
       const thrust = (motor.thrustG ?? 0) * count * propFactor;
@@ -325,12 +278,6 @@ export function analyzeBuild(build: Build): Analysis {
     }
   }
 
-  if (battery) {
-    if (peakCurrentA > battery.maxA) {
-      if (avgCurrentA > battery.maxA) err(`${battery.name} ne peut fournir que ${battery.maxA} A (besoin ${avgCurrentA.toFixed(1)} A).`);
-      else warn(`Pics de courant (${peakCurrentA.toFixed(1)} A) au-dessus de la limite batterie (${battery.maxA} A).`);
-    }
-  }
   const autonomyMin = battery ? autonomyMinutes(battery.capacity, avgCurrentA) : 0;
 
   return {

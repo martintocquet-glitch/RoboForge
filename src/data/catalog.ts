@@ -39,6 +39,8 @@ export const CONTROLLERS: Controller[] = [
   c({ id: "lego-spike-hub", name: "LEGO SPIKE Prime Hub", brand: "LEGO", cpu: "STM32F413", clockMHz: 100, ram: "320 Ko", vin: [7.2, 7.4], logicV: 3.3, gpio: 6, pwm: 6, adc: 0, wifi: false, ble: true, currentmA: 120, canRunVision: false, mass: 150, price: 120, desc: "Hub éducatif LEGO, 6 ports." }),
   c({ id: "vex-v5-brain", name: "VEX V5 Robot Brain", brand: "VEX Robotics", cpu: "Cortex-A9 ×2 + FPGA", clockMHz: 667, ram: "128 Mo", vin: [12.8, 12.8], logicV: 3.3, gpio: 29, pwm: 21, adc: 8, wifi: false, ble: false, currentmA: 400, canRunVision: false, mass: 380, price: 300, desc: "Cerveau des compétitions VEX." }),
   c({ id: "opencr", name: "ROBOTIS OpenCR 1.0", brand: "ROBOTIS", cpu: "STM32F746", clockMHz: 216, ram: "320 Ko", vin: [7, 24], logicV: 3.3, gpio: 32, pwm: 6, adc: 6, wifi: false, ble: false, currentmA: 150, canRunVision: false, mass: 60, price: 180, desc: "Contrôleur des TurtleBot3, port Dynamixel." }),
+  c({ id: "arduino-giga-r1", name: "Arduino GIGA R1 WiFi", brand: "Arduino", cpu: "STM32H747XI double cœur", clockMHz: 480, ram: "1 Mo", vin: [6, 24], logicV: 3.3, gpio: 76, pwm: 12, adc: 16, wifi: true, ble: true, currentmA: 130, canRunVision: false, mass: 40, price: 70, desc: "Carte 32 bits riche en E/S, WiFi et Bluetooth." }),
+  c({ id: "beaglebone-ai64", name: "BeagleBone AI-64", brand: "BeagleBoard", cpu: "TI TDA4VM Cortex-A72 + accélérateurs IA", clockMHz: 2000, ram: "4 Go", vin: [5, 5], logicV: 3.3, gpio: 60, pwm: 8, adc: 7, wifi: false, ble: false, currentmA: 2500, canRunVision: true, mass: 190, price: 200, desc: "Linux embarqué avec accélération pour vision et robotique." }),
 ];
 
 export const MOTORS: Motor[] = [
@@ -75,6 +77,8 @@ export const MOTORS: Motor[] = [
   m({ id: "tmotor-mn3508", name: "T-Motor MN3508 700KV", brand: "T-Motor", kind: "brushless", vNom: 22.2, vRange: [14.8, 25.2], rpm: 15500, torque: 0, currentA: 3, stallA: 22, thrustG: 2100, propIn: 13, mass: 87, price: 90, desc: "Multirotor pro, longue autonomie." }),
   m({ id: "dji-2312e", name: "DJI E305 2312E 960KV", brand: "DJI", kind: "brushless", vNom: 14.8, vRange: [11.1, 14.8], rpm: 14200, torque: 0, currentA: 3.5, stallA: 15, thrustG: 850, propIn: 9.4, mass: 56, price: 35, desc: "Système de propulsion DJI E305." }),
   m({ id: "1104-7500", name: "BetaFPV 1104 7500KV", brand: "BetaFPV", kind: "brushless", vNom: 7.4, vRange: [3.7, 8.4], rpm: 55000, torque: 0, currentA: 2, stallA: 8, thrustG: 200, propIn: 2.5, mass: 6, price: 14, desc: "Micro drone / cinewhoop." }),
+  m({ id: "pololu-25d-47", name: "Pololu 25D 47:1 12 V", brand: "Pololu", kind: "dc", vNom: 12, vRange: [6, 12], rpm: 100, torque: 8, currentA: 0.6, stallA: 5.5, mass: 90, price: 32, desc: "Motoréducteur compact à arbre 4 mm pour rover." }),
+  m({ id: "dynamixel-xl330", name: "Dynamixel XL330-M288-T", brand: "ROBOTIS", kind: "smart-servo", vNom: 5, vRange: [3.7, 6], rpm: 60, torque: 0.63, currentA: 0.2, stallA: 1.2, mass: 18, price: 25, desc: "Micro-servo bus série pour articulations légères." }),
 ];
 
 export const DRIVERS: Driver[] = [
@@ -98,6 +102,8 @@ export const DRIVERS: Driver[] = [
   d({ id: "esc-4in1-12", name: "BetaFPV 12 A 4-en-1", brand: "BetaFPV", supports: ["brushless"], channels: 4, vRange: [3.7, 8.4], currentA: 12, pinsPerChannel: 1, iface: "PWM", mass: 4, price: 30, desc: "Pour micro-drones." }),
   d({ id: "hobbywing-xrotor-40", name: "Hobbywing XRotor 40 A ×6", brand: "Hobbywing", supports: ["brushless"], channels: 6, vRange: [11.1, 25.2], currentA: 40, pinsPerChannel: 1, iface: "PWM", mass: 150, price: 160, desc: "Lot de 6 ESC pour hexacoptère." }),
   d({ id: "odrive-s1", name: "ODrive S1", brand: "ODrive Robotics", supports: ["brushless"], channels: 1, vRange: [12, 48], currentA: 40, pinsPerChannel: 1, iface: "UART", mass: 30, price: 150, desc: "Contrôle FOC de moteurs robotiques." }),
+  d({ id: "cytron-mdds30", name: "Cytron MDDS30", brand: "Cytron", supports: ["dc"], channels: 2, vRange: [7, 35], currentA: 30, pinsPerChannel: 1, iface: "UART", mass: 110, price: 110, desc: "Driver double 30 A avec modes PWM, RC et UART." }),
+  d({ id: "tmc5160", name: "TMC5160 stepper driver", brand: "Analog Devices / Trinamic", supports: ["stepper"], channels: 1, vRange: [8, 60], currentA: 3, pinsPerChannel: 2, iface: "PWM", mass: 15, price: 18, desc: "Driver pas à pas silencieux, jusqu'à 3 A." }),
 ];
 
 export const BATTERIES: Battery[] = [
@@ -119,6 +125,8 @@ export const BATTERIES: Battery[] = [
   b({ id: "powerbank-5v", name: "Batterie USB-C PD 20 000 mAh", brand: "Anker", chemistry: "Li-ion", voltage: 5, capacity: 20000, maxA: 3, mass: 350, price: 40, desc: "Pratique pour Raspberry Pi." }),
   b({ id: "lego-spike-bat", name: "Batterie LEGO SPIKE", brand: "LEGO", chemistry: "Li-ion", voltage: 7.3, capacity: 2100, maxA: 5, mass: 80, price: 50, desc: "Pour hub SPIKE Prime." }),
   b({ id: "vex-v5-bat", name: "Batterie VEX V5", brand: "VEX Robotics", chemistry: "Li-ion", voltage: 12.8, capacity: 1100, maxA: 20, mass: 400, price: 100, desc: "Pour cerveau V5." }),
+  b({ id: "lipo-4s-5000", name: "LiPo 4S 5000 mAh 25C", brand: "Gens ace", chemistry: "LiPo", voltage: 14.8, capacity: 5000, maxA: 125, mass: 520, price: 65, desc: "Pack 4S polyvalent pour gros rovers et multirotors." }),
+  b({ id: "lifepo4-4s-12ah", name: "LiFePO4 4S 12 Ah", brand: "Générique", chemistry: "LiFePO4", voltage: 12.8, capacity: 12000, maxA: 30, mass: 1150, price: 110, desc: "Batterie durable pour plateformes mobiles." }),
 ];
 
 export const SENSORS: Sensor[] = [
@@ -163,6 +171,8 @@ export const SENSORS: Sensor[] = [
   s({ id: "microswitch", name: "Micro-rupteur bumper", brand: "Omron", kind: "contact", iface: "GPIO", pins: 1, vRange: [3.3, 5], currentmA: 0, mass: 2, price: 1, desc: "Détection de choc." }),
   s({ id: "fsr402", name: "FSR 402 capteur de force", brand: "Interlink", kind: "force", iface: "Analog", pins: 1, vRange: [3.3, 5], currentmA: 1, mass: 1, price: 8, desc: "Mesure la pression (pinces, pieds)." }),
   s({ id: "hx711-load", name: "Cellule de charge 5 kg + HX711", brand: "Avia", kind: "force", iface: "GPIO", pins: 2, vRange: [2.7, 5], currentmA: 2, mass: 30, price: 6, desc: "Pesée de la charge utile." }),
+  s({ id: "bno085", name: "Bosch BNO085 IMU 9 axes", brand: "Bosch / CEVA", kind: "imu", iface: "I2C", pins: 2, vRange: [2.4, 3.6], currentmA: 12, axes: 9, mass: 3, price: 30, desc: "Fusion de mouvement avec orientation stabilisée." }),
+  s({ id: "tfmini-plus", name: "Benewake TFmini Plus", brand: "Benewake", kind: "distance", iface: "UART", pins: 2, vRange: [4.5, 6], currentmA: 110, range: 12, fov: 3, rays: 1, mass: 5, price: 40, desc: "Télémètre LiDAR compact, portée jusqu'à 12 m." }),
 ];
 
 export const PROPULSION: Propulsion[] = [
@@ -189,6 +199,8 @@ export const PROPULSION: Propulsion[] = [
   pr({ id: "gripper-alu", name: "Pince aluminium MG996R", brand: "Générique", kind: "gripper", diameter: 0, perMotor: false, mass: 90, price: 12, desc: "Pince robuste." }),
   pr({ id: "gripper-robotiq", name: "Robotiq 2F-85 (version légère)", brand: "Robotiq", kind: "gripper", diameter: 0, perMotor: false, mass: 900, price: 4500, desc: "Pince industrielle adaptative." }),
   pr({ id: "suction-cup", name: "Ventouse + pompe à vide", brand: "Générique", kind: "gripper", diameter: 0, perMotor: false, mass: 120, price: 15, desc: "Saisie par aspiration." }),
+  pr({ id: "wheel-gobilda-112", name: "goBILDA Mecanum Wheel 112 mm", brand: "goBILDA", kind: "mecanum", diameter: 112, perMotor: true, mass: 210, price: 28, desc: "Roues omnidirectionnelles grand format pour châssis FTC." }),
+  pr({ id: "prop-gemfan-7", name: "Hélices Gemfan 7×4×3", brand: "Gemfan", kind: "propeller", diameter: 7, perMotor: true, mass: 8, price: 2, desc: "Hélices tripales pour moteurs multirotors de taille moyenne." }),
 ];
 
 export const CHASSIS: Chassis[] = [
@@ -217,6 +229,8 @@ export const CHASSIS: Chassis[] = [
   ch({ id: "robotis-bioloid", name: "ROBOTIS Bioloid Premium", brand: "ROBOTIS", fits: ["humanoid"], size: [397, 200], payloadSlots: 4, mass: 700, price: 1100, desc: "Humanoïde 18 DOF." }),
   ch({ id: "hiwonder-tonypi", name: "Hiwonder TonyPi", brand: "Hiwonder", fits: ["humanoid"], size: [370, 190], payloadSlots: 4, mass: 600, price: 500, desc: "Humanoïde Raspberry Pi." }),
   ch({ id: "inmoov-lite", name: "Structure humanoïde imprimée 3D", brand: "Maison", fits: ["humanoid", "hexapod"], size: [400, 250], payloadSlots: 5, mass: 500, price: 60, desc: "Pièces PLA à imprimer." }),
+  ch({ id: "rev-duo-ftc", name: "REV DUO FTC chassis", brand: "REV Robotics", fits: ["rover4wd", "mecanum"], size: [450, 450], payloadSlots: 10, mass: 1700, price: 250, desc: "Base modulaire grand format pour robot de compétition." }),
+  ch({ id: "uarm-swift-pro", name: "uArm Swift Pro", brand: "UFACTORY", fits: ["arm"], size: [350, 350], reach: 320, payloadSlots: 3, mass: 2500, price: 450, desc: "Bras de bureau compact pour pick-and-place." }),
 ];
 
 export const ALL_PARTS: Part[] = [

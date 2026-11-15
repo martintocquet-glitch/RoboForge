@@ -45,4 +45,9 @@ describe("robot physics rules", () => {
     const a = analyzeBuild({ ...PRESETS.rover2wd, sensors: ["rplidar-a1"] });
     expect(a.issues.some((i) => i.level === "error" && i.msg.includes("Linux"))).toBe(true);
   });
+
+  it("rejects a controller with too few PWM outputs for direct servos", () => {
+    const a = analyzeBuild({ ...PRESETS.arm, controller: "arduino-nano", motor: "mg996r", motorCount: 18, driver: undefined });
+    expect(a.issues.some((i) => i.level === "error" && i.msg.includes("PWM"))).toBe(true);
+  });
 });

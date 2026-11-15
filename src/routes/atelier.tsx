@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ALL_PARTS, getPart } from "@/data/catalog";
 import { getRobotType, ROBOT_TYPES } from "@/data/robot-types";
-import type { Build, Motor, Part, RobotType, RobotTypeId } from "@/data/types";
+import type { Build, Part, RobotType, RobotTypeId } from "@/data/types";
 import { setBuild, startFromPreset, useBuild } from "@/lib/build-store";
+import { compatibilityForPart } from "@/lib/compatibility";
 import { formatDuration, formatMass, formatPrice, partKindLabel } from "@/lib/part-specs";
 import { analyzeBuild, type Analysis } from "@/lib/robot-calc";
 import { cn } from "@/lib/utils";
@@ -58,23 +59,6 @@ const SLOT_CATEGORY: Record<SlotKey, Part["category"]> = {
   propulsion: "propulsion",
   sensors: "sensor",
 };
-
-function isCompatible(p: Part, t: RobotType, build: Build): boolean {
-  switch (p.category) {
-    case "chassis":
-      return p.fits.includes(t.id);
-    case "motor":
-      return t.motorKinds.includes(p.kind);
-    case "driver": {
-      const motor = getPart<Motor>(build.motor);
-      return motor ? p.supports.includes(motor.kind) : p.supports.some((k) => t.motorKinds.includes(k));
-    }
-    case "propulsion":
-      return t.propulsionKinds.includes(p.kind);
-    default:
-      return true;
-  }
-}
 
 function Atelier() {
   const build = useBuild();
@@ -223,11 +207,14 @@ function PartPicker({ slot, build, type, onClose }: { slot: SlotKey; build: Buil
   const items = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return ALL_PARTS.filter((p) => p.category === category)
-      .map((p) => ({ p, ok: isCompatible(p, type, build) }))
-      .filter(({ ok }) => showAll || ok)
+      .map((p) => ({ p, compatibility: compatibilityForPart(p, build, slot) }))
+      .filter(({ compatibility }) => showAll || compatibility.status !== "incompatible")
       .filter(({ p }) => !needle || `${p.name} ${p.brand} ${p.desc} ${partKindLabel(p)}`.toLowerCase().includes(needle))
-      .sort((a, b) => Number(b.ok) - Number(a.ok) || a.p.price - b.p.price);
-  }, [q, showAll, category, type, build]);
+      .sort((a, b) => {
+        const rank = { compatible: 0, warning: 1, incompatible: 2 };
+        return rank[a.compatibility.status] - rank[b.compatibility.status] || a.p.price - b.p.price;
+      });
+  }, [q, showAll, category, slot, build]);
 
   const choose = (id: string) => {
     if (slot === "sensors") {
@@ -251,27 +238,42 @@ function PartPicker({ slot, build, type, onClose }: { slot: SlotKey; build: Buil
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher…" className="pl-9" />
             </div>
-            {slot !== "sensors" && slot !== "controller" && slot !== "battery" && (
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Switch checked={showAll} onCheckedChange={setShowAll} /> Montrer aussi les pièces incompatibles
-              </label>
-            )}
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Switch checked={showAll} onCheckedChange={setShowAll} /> Inclure les pièces incompatibles
+            </label>
           </div>
         </DialogHeader>
         <div className="grid flex-1 gap-3 overflow-y-auto p-5 sm:grid-cols-2">
-          {items.map(({ p, ok }) => {
+          {items.map(({ p, compatibility }) => {
             const selected = current.includes(p.id);
+            const note =
+              compatibility.status === "incompatible"
+                ? `Incompatible · ${compatibility.reasons.join(" ")}`
+                : compatibility.status === "warning"
+                  ? `À vérifier · ${compatibility.reasons.join(" ")}`
+                  : undefined;
             return (
               <PartCard
                 key={p.id}
                 part={p}
                 compact
                 selected={selected}
-                dimmed={!ok}
-                note={!ok ? "Non prévu pour ce type de robot" : undefined}
+                dimmed={compatibility.status === "incompatible"}
+                note={note}
+                noteLevel={compatibility.status === "incompatible" ? "error" : "warning"}
                 action={
                   <Button size="sm" className="w-full" variant={selected ? "secondary" : "default"} onClick={() => choose(p.id)}>
-                    {slot === "sensors" ? (selected ? "Retirer" : "Ajouter") : selected ? "Sélectionné" : "Choisir"}
+                    {slot === "sensors"
+                      ? selected
+                        ? "Retirer"
+                        : compatibility.status === "incompatible"
+                          ? "Ajouter quand même"
+                          : "Ajouter"
+                      : selected
+                        ? "Sélectionné"
+                        : compatibility.status === "incompatible"
+                          ? "Choisir quand même"
+                          : "Choisir"}
                   </Button>
                 }
               />

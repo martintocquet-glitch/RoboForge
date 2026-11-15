@@ -51,7 +51,7 @@ export function DrivePad({ keys, strafe, vertical, className }: { keys: KeySet; 
   );
 }
 
-export function Telemetry({ items }: { items: { label: string; value: string; tone?: "ok" | "warn" | "bad" }[] }) {
+export function Telemetry({ items }: { items: { label: string; value: string; tone?: "ok" | "warn" | "bad" | undefined }[] }) {
   return (
     <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-3 lg:grid-cols-4">
       {items.map((it) => (

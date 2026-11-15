@@ -3,7 +3,23 @@ import type { Part } from "@/data/types";
 import { formatMass, formatPrice, partKindLabel, partSpecs } from "@/lib/part-specs";
 import { cn } from "@/lib/utils";
 
-export function PartCard({ part, selected, dimmed, note, action, compact }: { part: Part; selected?: boolean | undefined; dimmed?: boolean | undefined; note?: string | undefined; action?: ReactNode; compact?: boolean | undefined }) {
+export function PartCard({
+  part,
+  selected,
+  dimmed,
+  note,
+  noteLevel = "warning",
+  action,
+  compact,
+}: {
+  part: Part;
+  selected?: boolean | undefined;
+  dimmed?: boolean | undefined;
+  note?: string | undefined;
+  noteLevel?: "warning" | "error";
+  action?: ReactNode;
+  compact?: boolean | undefined;
+}) {
   const kind = partKindLabel(part);
   const specs = partSpecs(part);
   return (
@@ -16,7 +32,10 @@ export function PartCard({ part, selected, dimmed, note, action, compact }: { pa
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="label-tech truncate">{part.brand}{kind ? ` · ${kind}` : ""}</div>
+          <div className="label-tech truncate">
+            {part.brand}
+            {kind ? ` · ${kind}` : ""}
+          </div>
           <h3 className="mt-0.5 font-display text-base font-semibold leading-snug">{part.name}</h3>
         </div>
         <div className="shrink-0 text-right font-mono text-sm tabular-nums">
@@ -29,11 +48,22 @@ export function PartCard({ part, selected, dimmed, note, action, compact }: { pa
         {specs.slice(0, compact ? 4 : specs.length).map(([k, v]) => (
           <div key={k} className="min-w-0">
             <dt className="text-muted-foreground">{k}</dt>
-            <dd className="truncate font-mono" title={v}>{v}</dd>
+            <dd className="truncate font-mono" title={v}>
+              {v}
+            </dd>
           </div>
         ))}
       </dl>
-      {note && <p className="mt-2 text-xs text-warning">{note}</p>}
+      {note && (
+        <p
+          className={cn(
+            "mt-2 text-xs",
+            noteLevel === "error" ? "text-destructive" : "text-warning",
+          )}
+        >
+          {note}
+        </p>
+      )}
       {action && <div className="mt-auto pt-3">{action}</div>}
     </div>
   );
