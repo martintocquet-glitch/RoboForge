@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
+import { ArmSim } from "@/components/sim/arm-sim";
 import { DroneSim } from "@/components/sim/drone-sim";
 import { GroundSim } from "@/components/sim/ground-sim";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ export const Route = createFileRoute("/simulateur")({
   head: () => ({
     meta: [
       { title: "Simulateur — pilotez votre robot | RoboForge" },
-      { name: "description", content: "Pilotez le robot assemblé dans l'atelier : arène d'obstacles, suivi de ligne, combat de sumo." },
+      { name: "description", content: "Pilotez le robot assemblé dans l'atelier : arène d'obstacles, suivi de ligne, combat de sumo, bras robotique." },
       { property: "og:title", content: "Simulateur — pilotez votre robot | RoboForge" },
       { property: "og:description", content: "Testez votre robot en simulation avec ses vraies caractéristiques." },
       { property: "og:type", content: "website" },
@@ -51,9 +52,7 @@ function Simulateur() {
         ) : type.sim === "drone" ? (
           <DroneSim key={type.id} analysis={analysis} />
         ) : (
-          <div className="rounded-md border border-border bg-panel p-6 text-muted-foreground">
-            La simulation du bras robotique n'est pas encore disponible. Les robots au sol et les drones peuvent déjà être pilotés.
-          </div>
+          <ArmSim key={type.id} analysis={analysis} />
         )}
       </div>
     </div>
