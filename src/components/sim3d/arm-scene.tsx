@@ -154,7 +154,7 @@ function Cubes({ st, live }: { st: ArmStatic; live: MutableRefObject<ArmLive | n
       {objs.map((o, i) => (
         <mesh key={`${st.W}-${o.id}`} ref={(m) => void (refs.current[i] = m)} castShadow>
           <boxGeometry args={[o.size, o.size, o.size]} />
-          <meshStandardMaterial color={CUBE_COLORS[i % CUBE_COLORS.length]} roughness={0.5} />
+          <meshStandardMaterial color={CUBE_COLORS[i % CUBE_COLORS.length] ?? "#4aa3df"} roughness={0.5} />
         </mesh>
       ))}
     </>
