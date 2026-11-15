@@ -247,6 +247,8 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
     let lastErr = 0;
     let turnDir = 1;
     let avoidT = 0;
+    let followT = 0; // durée restante de suivi de mur (mission GPS)
+    let followD0 = 0; // distance à la balise au début du contournement
     let lap = 0;
     let bestLap = Infinity;
     let lapStart = 0;
@@ -468,24 +470,37 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
               const rep = (d: number) => Math.max(0, 1 - d / (safe * 1.8));
               const push = rep(right) - rep(left); // >0 : obstacle à gauche -> tourner à droite
               let goalErr = wrapAngle(want - me.th);
+              const dGoal = Math.hypot(wp[0] - fix.x, wp[1] - fix.y);
               if (avoidT > 0) {
-                // hystérésis : on termine le contournement avant de rendre la main au GPS
+                // petit recul + rotation pour se dégager du mur
                 avoidT -= dt;
-                if (avoidT > 0.9) {
-                  thr = -0.4;
+                thr = -0.4;
+                turn = turnDir;
+              } else if (followT > 0) {
+                // suivi de mur : on garde l'obstacle sur le côté jusqu'à ce que la balise soit dégagée
+                followT -= dt;
+                const side = turnDir < 0 ? right : left; // côté où se trouve l'obstacle
+                const sideErr = isFinite(side) ? (side - safe * 1.4) / safe : 1;
+                if (front < safe) {
                   turn = turnDir;
+                  thr = 0.15;
                 } else {
-                  thr = 0.7;
-                  turn = turnDir * 0.6 + push * 0.6;
+                  // trop loin du mur -> revenir vers lui ; trop près -> s'écarter
+                  turn = Math.max(-1, Math.min(1, -turnDir * sideErr * 0.9 + (front < safe * 1.8 ? turnDir * 0.7 : 0)));
+                  thr = 0.65;
                 }
+                const clear = front > safe * 2.2 && Math.abs(goalErr) < 0.5;
+                if ((clear && dGoal < followD0 - 0.15) || (clear && followT < 4)) followT = 0;
               } else if (front < safe) {
                 turnDir = left > right ? -1 : right > left ? 1 : Math.sign(goalErr) || 1;
-                avoidT = 1.5;
+                avoidT = 0.5;
+                followT = 9;
+                followD0 = dGoal;
                 thr = -0.4;
                 turn = turnDir;
               } else {
                 // le cap visé ne peut pas replonger vers un mur proche
-                goalErr += push * 1.2 + (front < safe * 1.8 ? turnDir * 0.6 : 0);
+                goalErr += push * 1.2;
                 turn = Math.max(-1, Math.min(1, goalErr * 1.5));
                 thr = 1 - 0.5 * Math.max(rep(front), Math.min(1, Math.abs(goalErr) / Math.PI));
               }
