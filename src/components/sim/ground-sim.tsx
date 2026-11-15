@@ -575,9 +575,16 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
       // sans encodeurs, rien ne corrige : le poids et ce qu'on poussent font chuter la vitesse
       pushing = touching;
       const load = loadFactor(analysis.massG, pushing, caps.encoders);
-      me.v = ramp(me.v, thr * vmax * sag * load, accel * (caps.encoders ? 1 : 0.85));
+      const wantV = thr * vmax * sag * load;
+      // accélérer réclame la force motrice encore disponible ; ralentir reste sous la limite d'adhérence
+      const aFwd = accelAt(me.v) * (caps.encoders ? 1 : 0.85);
+      me.v = ramp(me.v, wantV, Math.abs(wantV) > Math.abs(me.v) ? aFwd : thr === 0 ? aCoast : aBrake);
       me.w = ramp(me.w, turn * wmax, wmax * 4);
-      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accel);
+      me.vs = ramp(me.vs, strafe * vmax * 0.8 * sag * load, accelAt(me.vs) * (caps.encoders ? 1 : 0.9));
+      // au-delà de μ·g, la force demandée ne passe plus au sol : les roues patinent
+      const demand = hasDrive ? analysis.motorAccelMs2 * Math.max(0, 1 - Math.abs(me.v) / vFree) : 0;
+      const lost = demand > aGrip + 0.01 && Math.abs(thr) > 0.05 ? 1 - aGrip / demand : 0;
+      slip += (lost - slip) * Math.min(1, dt * 4);
 
       const px = me.x;
       const py = me.y;
@@ -685,9 +692,9 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
             const nx = dx / dd;
             const ny = dy / dd;
             const overlap = rad * 2 - dd;
-            const grip = parts.propulsion?.id === "wheel-silicone-sumo" ? 1.25 : parts.propulsion?.kind === "track" ? 1.15 : 1;
-            const myF = analysis.massG * grip * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(ny, nx) - me.th)) * (Math.abs(me.v) > 0.01 ? Math.min(1, analysis.torqueMargin / 2) : 0.3));
-            const opF = oppMass * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(-ny, -nx) - opp.th)) * (opp.v > 0.01 ? 1 : 0.3));
+            // Bras de fer : la force transmise au sol ne dépasse jamais μ·m·g, ni la force motrice des roues.
+            const myF = pushN * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(ny, nx) - me.th)) * (Math.abs(me.v) > 0.01 ? 1 : 0.3));
+            const opF = oppPushN * (0.4 + 0.6 * Math.max(0, Math.cos(Math.atan2(-ny, -nx) - opp.th)) * (opp.v > 0.01 ? 1 : 0.3));
             const share = myF / (myF + opF);
             me.x -= nx * overlap * (1 - share);
             me.y -= ny * overlap * (1 - share);
@@ -1008,6 +1015,11 @@ export function GroundSim({ analysis }: { analysis: Analysis }) {
         if (caps.imu.level > 0) {
           items.push({ label: "Accélération", value: `${accelG.toFixed(2)} g` });
           items.push({ label: "Inclinaison", value: `${tilt.toFixed(0)}°` });
+        }
+        if (analysis.grip > 0) {
+          items.push({ label: "Adhérence", value: `μ ${analysis.grip.toFixed(2)} · ${analysis.gripAccelMs2.toFixed(1)} m/s²` });
+          if (analysis.motorAccelMs2 > analysis.gripAccelMs2)
+            items.push({ label: "Patinage", value: `${Math.round(slip * 100)} %`, tone: slip > 0.05 ? "warn" : "ok" });
         }
         items.push({ label: "Régulation vitesse", value: caps.encoders ? "encodeurs" : "aucune", tone: caps.encoders ? "ok" : "warn" });
         if (caps.bumper) items.push({ label: "Chocs pare-chocs", value: String(bumps), tone: bumps ? "warn" : "ok" });
