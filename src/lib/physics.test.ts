@@ -104,7 +104,9 @@ describe("atelier", () => {
       battery: "lipo-3s-2200",
       propulsion: "wheel-130",
     });
-    expect(a.reducerRatio).toBe(10);
+    // LiPo 3S = 11,1 V pour un moteur 12 V : 92,5 % de la vitesse à vide, soit 33,6 m/s
+    expect(a.freeSpeedMs).toBeCloseTo(33.56, 1);
+    expect(a.reducerRatio).toBe(9);
     expect(a.accelMs2).toBeLessThanOrEqual(a.gripAccelMs2 + 1e-9);
     expect(a.issues.some((i) => i.level === "warning" && i.msg.includes("réducteur"))).toBe(true);
   });
